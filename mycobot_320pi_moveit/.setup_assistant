@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: mycobot_description
+    relative_path: urdf/mycobot_320_pi_2022/pro_320_pi_2022_force_gripper.urdf
+  srdf:
+    relative_path: config/firefighter.srdf
+  package_settings:
+    author_name: smoh
+    author_email: smoh@todo.com
+    generated_timestamp: 1792744280
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
