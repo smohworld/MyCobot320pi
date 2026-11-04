@@ -1,0 +1,31 @@
+mycobot_driver:
+  ros__parameters:
+    # socket: PC -> robot_side/mycobot320_socket_server.py on the robot's Pi
+    # serial: USB cable (/dev/ttyUSB0 or /dev/ttyACM0), or /dev/ttyAMA0 on the Pi itself
+    # fake:   simulated robot
+    connection: socket
+    ip: 192.168.0.10
+    netport: 9000
+    serial_port: /dev/ttyUSB0
+    baudrate: 115200
+
+    # urdf_deg = sign * robot_deg + offset. Keep identity unless RViz and the real arm
+    # disagree at the same angles.
+    joint_signs: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    joint_offsets_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    joint_limits_deg: [167.8, 134.6, 144.9, 144.9, 167.8, 179.9]
+
+    state_rate: 10.0
+    move_speed: 30
+    goal_tolerance_deg: 1.0
+    waypoint_tolerance_deg: 5.0
+    settle_time: 0.5
+    move_timeout: 30.0
+    power_on_at_start: true
+
+    gripper_enabled: true
+    gripper_id: 14
+    gripper_joint: gripper_controller
+    gripper_joint_open: 1.0
+    gripper_rate: 2.0
+    gripper_timeout: 3.0

@@ -37,11 +37,14 @@ setup(
         # launch / rviz
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
+        # calibration / mounting yaml (camera extrinsics, TCP)
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         # URDF
         (os.path.join('share', package_name, 'urdf'), glob('urdf/*.urdf')),
         # URDF + visual (.dae) / collision (.stl) meshes
         (os.path.join('share', package_name, 'urdf', 'mycobot_320_pi_2022'),
-            glob('urdf/mycobot_320_pi_2022/*.urdf') + glob('urdf/mycobot_320_pi_2022/*.dae')
+            glob('urdf/mycobot_320_pi_2022/*.urdf') + glob('urdf/mycobot_320_pi_2022/*.xacro')
+            + glob('urdf/mycobot_320_pi_2022/*.dae')
             + glob('urdf/mycobot_320_pi_2022/*.stl')),
         (os.path.join('share', package_name, 'urdf', 'mycobot_320_pi_2022', 'force_control_gripper'),
             glob('urdf/mycobot_320_pi_2022/force_control_gripper/*.dae')

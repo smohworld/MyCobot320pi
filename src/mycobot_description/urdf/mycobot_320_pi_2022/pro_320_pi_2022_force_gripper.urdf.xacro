@@ -1,7 +1,15 @@
-<?xml version="1.1"?>
-<robot  xmlns:xacro="http://www.ros.org/wiki/xacro" name="firefighter" >
-	
-<xacro:property name="width" value=".2" />
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mycobot_320_pi_2022_force_gripper">
+
+  <!-- Calibrated / measured values (camera extrinsics, TCP, flange yaw) live in a yaml file
+       so the hand-eye result can be dropped in without touching this file.
+       Override with: xacro ... calibration_file:=/path/to/hand_eye.yaml -->
+  <xacro:arg name="calibration_file"
+             default="$(find mycobot_description)/config/hand_eye_nominal.yaml"/>
+  <xacro:property name="calib" value="${xacro.load_yaml('$(arg calibration_file)')}"/>
+  <xacro:property name="cam" value="${calib['link6_to_camera_optical']}"/>
+  <xacro:property name="tcp" value="${calib['link6_to_gripper_tcp']}"/>
+  <xacro:property name="flange_yaw" value="${calib['camera_flange_yaw']}"/>
 
   <link name="base">
     <visual>
@@ -133,10 +141,11 @@
     </collision>
   </link>
 
+  <!-- optical frame (REP-103: z forward, x right, y down) - use this as the image frame_id.
+       Its pose comes straight from the hand-eye result (link6 -> camera_optical_frame). -->
+  <link name="camera_optical_frame"/>
   <!-- camera body frame (REP-103: x forward = viewing direction, y left, z up) -->
   <link name="camera_link"/>
-  <!-- optical frame (REP-103: z forward, x right, y down) - use this as the image frame_id -->
-  <link name="camera_optical_frame"/>
 
   <link name="gripper_connection">
     <visual>
@@ -262,8 +271,10 @@
 
 
   <!-- tool center point: between the finger pads, z along the approach direction.
-       gripper_controller 0 = closed (fingertips meet at z~0.166 incl. 6 mm camera flange), 1 = open.
-       Offset estimated from the meshes - measure on the real gripper and adjust. -->
+       gripper_controller 0 = closed, 1 = open (joint value in rad, NOT the 0-100 gripper command).
+       Parallel-link fingers move on an arc: fingertip z (link6 frame) is ~0.166 closed and
+       ~0.147 fully open, inner fingertip gap ~0 .. ~110 mm in the mesh model.
+       The TCP offset is a fixed estimate - measure on the real gripper and set it in the yaml. -->
   <link name="gripper_tcp"/>
 
 
@@ -317,32 +328,37 @@
      <origin xyz= "0 0.0655 0.0" rpy = "-1.5708 0 0"/>
   </joint>
 
-  <!-- yaw 1.5708 points the camera arm to link6 +y, the side the gripper body does not occupy.
-       If it differs from how the flange is mounted on your robot, change only this yaw. -->
+  <!-- camera_flange_yaw (yaml, nominal 1.5708) points the camera arm to link6 +y, the side the
+       gripper body does not occupy. It only places the flange mesh; the camera frame itself is
+       set by link6_to_camera_optical below. -->
   <joint name="joint6output_to_camera_flange" type="fixed">
     <parent link="link6"/>
     <child link="camera_flange"/>
-    <origin xyz= "0 0 0" rpy = "0 0 1.5708"/>
+    <origin xyz= "0 0 0" rpy = "0 0 ${flange_yaw}"/>
   </joint>
 
-  <joint name="camera_flange_to_camera_link" type="fixed">
-    <parent link="camera_flange"/>
-    <child link="camera_link"/>
-    <origin xyz= "0.0747 0 0.016" rpy = "0 -1.5708 0"/>
-  </joint>
-
-  <joint name="camera_link_to_camera_optical_frame" type="fixed">
-    <parent link="camera_link"/>
+  <!-- camera extrinsics = hand-eye result. Nominal (from the flange mesh): lens centre at
+       link6 (0, 0.0747, 0.016), optical axes parallel to link6 (z = approach direction). -->
+  <joint name="link6_to_camera_optical_frame" type="fixed">
+    <parent link="link6"/>
     <child link="camera_optical_frame"/>
-    <origin xyz= "0 0 0" rpy = "-1.5708 0 -1.5708"/>
+    <origin xyz="${cam['x']} ${cam['y']} ${cam['z']}"
+            rpy="${cam['roll']} ${cam['pitch']} ${cam['yaw']}"/>
   </joint>
 
-  <!-- gripper sits on top of the 6 mm flange disc; the -1.5708 yaw undoes the flange yaw
+  <!-- inverse of the REP-103 body->optical rotation (rpy -pi/2 0 -pi/2) -->
+  <joint name="camera_optical_frame_to_camera_link" type="fixed">
+    <parent link="camera_optical_frame"/>
+    <child link="camera_link"/>
+    <origin xyz= "0 0 0" rpy = "${pi/2} ${-pi/2} 0"/>
+  </joint>
+
+  <!-- gripper sits on top of the 6 mm flange disc; the yaw undoes the flange yaw
        so the gripper keeps its original orientation relative to link6 -->
   <joint name="joint6output_to_gripper_connect" type="fixed">
     <parent link="camera_flange"/>
     <child link="gripper_connection"/>
-     <origin xyz= "0 0 0.006" rpy = "0 0 -1.5708"/>
+     <origin xyz= "0 0 0.006" rpy = "0 0 ${-flange_yaw}"/>
   </joint>
 
   <joint name="joint6output_to_gripper_base" type="fixed">
@@ -407,7 +423,8 @@
   <joint name="link6_to_gripper_tcp" type="fixed">
     <parent link="link6"/>
     <child link="gripper_tcp"/>
-    <origin xyz= "0 0 0.151" rpy = "0 0 0"/>  <!-- 0.145 + 0.006 camera flange disc -->
+    <origin xyz="${tcp['x']} ${tcp['y']} ${tcp['z']}"
+            rpy="${tcp['roll']} ${tcp['pitch']} ${tcp['yaw']}"/>
   </joint>
 
 

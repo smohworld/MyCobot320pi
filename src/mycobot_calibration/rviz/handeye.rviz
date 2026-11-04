@@ -1,0 +1,107 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 0.1
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Alpha: 0.9
+      Collision Enabled: false
+      Visual Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF (camera frames)
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 0.15
+      Frames:
+        All Enabled: false
+        camera_optical_frame:
+          Value: true
+        camera_optical_frame_calib:
+          Value: true
+        camera_optical_frame_true:
+          Value: true
+        link6:
+          Value: true
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Calibration (board estimate, poses, result)
+      Enabled: true
+      Namespaces: {}
+      Topic:
+        Value: /handeye_calibrator/markers
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Sim ground-truth board
+      Enabled: true
+      Namespaces: {}
+      Topic:
+        Value: /sim_camera/markers
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: Detection
+      Enabled: true
+      Normalize Range: true
+      Topic:
+        Value: /handeye_calibrator/debug_image
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.3
+      Focal Point:
+        X: 0
+        Y: -0.15
+        Z: 0.15
+      Pitch: 0.55
+      Yaw: 1.2
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+Window Geometry:
+  Detection:
+    collapsed: false
+  Height: 900
+  Width: 1500

@@ -1,0 +1,8 @@
+# ChArUco board used for camera + hand-eye calibration.
+# After printing, measure one square (ideally 5 squares / 5) and replace
+# square_length / marker_length with the measured values (metres).
+dictionary: DICT_5X5_100
+squares_x: 5
+squares_y: 7
+square_length: 0.035
+marker_length: 0.026
