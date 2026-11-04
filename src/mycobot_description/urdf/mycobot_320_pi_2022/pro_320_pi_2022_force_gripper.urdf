@@ -1,0 +1,414 @@
+<?xml version="1.1"?>
+<robot  xmlns:xacro="http://www.ros.org/wiki/xacro" name="firefighter" >
+	
+<xacro:property name="width" value=".2" />
+
+  <link name="base">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/base.dae"/>
+      </geometry>
+    <origin xyz = "0.0 0 0 " rpy = " 0 0 1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/base.stl"/>
+        </geometry>
+        <origin xyz = "0.0 0 0 " rpy = " 0 0 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="link1">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link1.dae"/>
+      </geometry>
+
+    <origin xyz = "0.0 0.0 -0.078 " rpy = " 0 0 1.5708"/>
+    </visual>
+    <collision>
+     <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link1.stl"/>
+      </geometry>
+     <origin xyz = "0.0 0.0 -0.078 " rpy = " 0 0 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="link2">
+    <visual>
+      <geometry>
+       
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link2.dae"/>
+      </geometry>
+       <origin xyz = "0.0 0.0 -0.04 " rpy = " 0 1.5708 0"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link2.stl"/>
+      </geometry>
+       <origin xyz = "0.0 0.0 -0.04 " rpy = " 0 1.5708 0"/>
+    </collision>
+  </link>
+
+  <link name="link3">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link3.dae"/>
+      </geometry>
+    <origin xyz = "0.0 0.0 0.039 " rpy = " 1.5708 1.5708 1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link3.stl"/>
+      </geometry>
+      <origin xyz = "0.0 0.0 0.039 " rpy = " 1.5708 1.5708 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="link4">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link4.dae"/>
+      </geometry>
+         <origin xyz = "0.0 -0.0024 -0.05" rpy = " 1.5708 1.5708 0"/>
+    </visual>
+    <collision>
+       <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link4.stl"/>
+      </geometry>
+       <origin xyz = "0.0 -0.0024 -0.05" rpy = " 1.5708 1.5708 0"/>
+    </collision>
+  </link>
+
+  <link name="link5">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link5.dae"/>
+      </geometry>
+    <origin xyz = "0.0 0.0 -0.05 " rpy = " 0  0 -1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link5.stl"/>
+      </geometry>
+    <origin xyz = "0.0 0.0 -0.05 " rpy = " 0  0 -1.5708"/>
+    </collision>
+  </link>
+
+  <link name="link6">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link6.dae"/>
+      </geometry>
+     <origin xyz = "0.0 0.0 -0.022 " rpy = " 1.5708 1.5708 0"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/link6.stl"/>
+      </geometry>
+    <origin xyz = "0.0 0.0 -0.022 " rpy = " 1.5708 1.5708 0"/>
+    </collision>
+  </link>
+
+  <!-- myCobot Pro camera flange (720P USB 2.0 camera).
+       Mounted between the link6 end flange and the gripper.
+       camera_flange.stl is in metres, origin = flange centre on the link6 mounting face:
+         - mounting disc: d60 x 6 mm (z 0..0.006), so everything above it moves +0.006 in z
+         - camera arm runs along mesh +x; lens (d11) centre at (0.0747, 0, 0.016), looking +z -->
+  <link name="camera_flange">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/camera_flange.stl"/>
+      </geometry>
+      <origin xyz = "0 0 0" rpy = "0 0 0"/>
+      <material name="camera_flange_black">
+        <color rgba="0.15 0.15 0.15 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/camera_flange.stl"/>
+      </geometry>
+      <origin xyz = "0 0 0" rpy = "0 0 0"/>
+    </collision>
+  </link>
+
+  <!-- camera body frame (REP-103: x forward = viewing direction, y left, z up) -->
+  <link name="camera_link"/>
+  <!-- optical frame (REP-103: z forward, x right, y down) - use this as the image frame_id -->
+  <link name="camera_optical_frame"/>
+
+  <link name="gripper_connection">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/mygripper_f100_connection.dae"/>
+      </geometry>
+    <origin xyz = "-0.03 0.014 0 " rpy = " 0  0 -1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/mygripper_f100_connection.stl"/>
+      </geometry>
+    <origin xyz = "-0.03 0.014 0 " rpy = " 0  0 -1.5708"/>
+    </collision>
+  </link>
+
+  <link name="gripper_base">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_base.dae"/>
+      </geometry>
+    <origin xyz = "-0.107 0.012 0.0 " rpy = " 1.5708  0 1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_base.stl"/>
+      </geometry>
+    <origin xyz = "-0.107 0.012 0.0 " rpy = " 1.5708  0 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="gripper_left1">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_left1.dae"/>
+      </geometry>
+    <origin xyz = "-0.047 -0.013 0.044 " rpy = " 1.5708 0 1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_left1.stl"/>
+      </geometry>
+        <origin xyz = "-0.047 -0.013 0.044 " rpy = " 1.5708 0 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="gripper_left2">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_left2.dae"/>
+      </geometry>
+    <origin xyz = "-0.0 0.03 0.004 " rpy = " 3.14159 0 1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_left2.stl"/>
+      </geometry>
+        <origin xyz = "-0.0 0.03 0.004 " rpy = " 3.14159 0 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="gripper_left3">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_left3.dae"/>
+      </geometry>
+    <origin xyz = "0 -0.03 0.012 " rpy = " 1.5708 3.14159 1.5708"/>
+
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_left3.stl"/>
+      </geometry>
+    <origin xyz = "0 -0.03 0.012 " rpy = " 1.5708 3.14159 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="gripper_right1">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_right1.dae"/>
+      </geometry>
+    <origin xyz = "0.047 -0.013 -0.046 " rpy = " 1.5708 3.14 -1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_right1.stl"/>
+      </geometry>
+        <origin xyz = "0.047 -0.013 -0.046 " rpy = " 1.5708 3.14 -1.5708"/>
+    </collision>
+  </link>
+
+  <link name="gripper_right2">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_right2.dae"/>
+      </geometry>
+    <origin xyz = "0 0.03 -0.005 " rpy = " 0 0 1.5708"/>
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_right2.stl"/>
+      </geometry>
+        <origin xyz = "0 0.03 -0.005 " rpy = " 0 0 1.5708"/>
+    </collision>
+  </link>
+
+  <link name="gripper_right3">
+    <visual>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_right3.dae"/>
+      </geometry>
+    <origin xyz = "-0.014 -0.029 0.004 " rpy = " 3.14 0 -1.5708"/>
+
+    </visual>
+    <collision>
+      <geometry>
+       <mesh filename="package://mycobot_description/urdf/mycobot_320_pi_2022/force_control_gripper/pro_gripper_right3.stl"/>
+      </geometry>
+    <origin xyz = "-0.014 -0.029 0.004 " rpy = " 3.14 0 -1.5708"/>
+    </collision>
+  </link>
+
+
+  <!-- tool center point: between the finger pads, z along the approach direction.
+       gripper_controller 0 = closed (fingertips meet at z~0.166 incl. 6 mm camera flange), 1 = open.
+       Offset estimated from the meshes - measure on the real gripper and adjust. -->
+  <link name="gripper_tcp"/>
+
+
+  <joint name="joint2_to_joint1" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-2.93" upper = "2.93" velocity = "1.0"/>
+    <parent link="base"/>
+    <child link="link1"/>
+    <origin xyz= "0 0 0.1739" rpy = "0 0 0"/> 
+  </joint>
+
+
+  <joint name="joint3_to_joint2" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-2.35" upper = "2.35" velocity = "1.0"/>
+    <parent link="link1"/>
+    <child link="link2"/>
+       <origin xyz= "0 -0.08878 0" rpy = "0 -1.5708 1.5708"/> 
+  </joint>
+
+
+  <joint name="joint4_to_joint3" type="revolute">
+    <axis xyz=" 0 0 1"/>
+    <limit effort = "1000.0" lower = "-2.53" upper = "2.53" velocity = "1.0"/>
+    <parent link="link2"/>
+    <child link="link3"/>
+    <origin xyz= "0.135 0 -0.08878   " rpy = "0 0 0"/>  
+  </joint>
+
+  <joint name="joint5_to_joint4" type="revolute">
+    <axis xyz=" 0 0 1"/>
+    <limit effort = "1000.0" lower = "-2.53" upper = "2.53" velocity = "1.0"/>
+    <parent link="link3"/>
+    <child link="link4"/>
+     <origin xyz = "0.120 0 0.08878 " rpy = " 0 0 1.57080"/>
+  </joint>
+
+  <joint name="joint6_to_joint5" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-2.93" upper = "2.93" velocity = "1.0"/>
+    <parent link="link4"/>
+    <child link="link5"/>
+     <origin xyz= "0 -0.095 0.0" rpy = "1.5708 0 0"/>
+  </joint>
+
+  <joint name="joint6output_to_joint6" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-3.14" upper = "3.14" velocity = "1.0"/>
+    <parent link="link5"/>
+    <child link="link6"/>
+     <origin xyz= "0 0.0655 0.0" rpy = "-1.5708 0 0"/>
+  </joint>
+
+  <!-- yaw 1.5708 points the camera arm to link6 +y, the side the gripper body does not occupy.
+       If it differs from how the flange is mounted on your robot, change only this yaw. -->
+  <joint name="joint6output_to_camera_flange" type="fixed">
+    <parent link="link6"/>
+    <child link="camera_flange"/>
+    <origin xyz= "0 0 0" rpy = "0 0 1.5708"/>
+  </joint>
+
+  <joint name="camera_flange_to_camera_link" type="fixed">
+    <parent link="camera_flange"/>
+    <child link="camera_link"/>
+    <origin xyz= "0.0747 0 0.016" rpy = "0 -1.5708 0"/>
+  </joint>
+
+  <joint name="camera_link_to_camera_optical_frame" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin xyz= "0 0 0" rpy = "-1.5708 0 -1.5708"/>
+  </joint>
+
+  <!-- gripper sits on top of the 6 mm flange disc; the -1.5708 yaw undoes the flange yaw
+       so the gripper keeps its original orientation relative to link6 -->
+  <joint name="joint6output_to_gripper_connect" type="fixed">
+    <parent link="camera_flange"/>
+    <child link="gripper_connection"/>
+     <origin xyz= "0 0 0.006" rpy = "0 0 -1.5708"/>
+  </joint>
+
+  <joint name="joint6output_to_gripper_base" type="fixed">
+    <parent link="gripper_connection"/>
+    <child link="gripper_base"/>
+     <origin xyz= "0 -0.02 0.0364" rpy = "1.5708 0 0"/>
+  </joint>
+
+  <joint name="gripper_controller" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "0" upper = "1" velocity = "0.5"/>
+    <parent link="gripper_base"/>
+    <child link="gripper_left3"/>
+    <origin xyz= "-0.018 0.016 -0.02" rpy = "0 0 0"/> 
+  </joint>
+
+  <joint name="gripper_base_to_gripper_left2" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-0.8" upper = "1" velocity = "0.5"/>
+    <parent link="gripper_base"/>
+    <child link="gripper_left2"/>
+    <origin xyz= "-0.0445 -0.004 -0.02" rpy = "0 0 0"/> 
+    <mimic joint="gripper_controller" multiplier="1.0" offset="0" />
+  </joint>
+
+  <joint name="gripper_left3_to_gripper_left1" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-1" upper = "0.5" velocity = "0.5"/>
+    <parent link="gripper_left3"/>
+    <child link="gripper_left1"/>
+    <origin xyz= "0.01 0.06 0.0" rpy = "0 0 0"/> 
+    <mimic joint="gripper_controller" multiplier="-1.0" offset="0" />
+  </joint>
+
+  <joint name="gripper_base_to_gripper_right3" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-1" upper = "0" velocity = "0.5"/>
+    <parent link="gripper_base"/>
+    <child link="gripper_right3"/>
+    <origin xyz= "0.018 0.015 -0.0212" rpy = "0 0 0"/> 
+    <mimic joint="gripper_controller" multiplier="-1.0" offset="0" />
+  </joint>
+
+  <joint name="gripper_base_to_gripper_right2" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-1" upper = "0.8" velocity = "0.5"/>
+    <parent link="gripper_base"/>
+    <child link="gripper_right2"/>
+    <origin xyz= "0.0442 -0.004 -0.02" rpy = "0 0 0"/> 
+    <mimic joint="gripper_controller" multiplier="-1.0" offset="0" />
+  </joint>
+
+  <joint name="gripper_right3_to_gripper_right1" type="revolute">
+    <axis xyz="0 0 1"/>
+    <limit effort = "1000.0" lower = "-0.5" upper = "1" velocity = "0.5"/>
+    <parent link="gripper_right3"/>
+    <child link="gripper_right1"/>
+    <origin xyz= "-0.01 0.061 0.001" rpy = "0 0 0"/> 
+    <mimic joint="gripper_controller" multiplier="1.0" offset="0" />
+  </joint>
+
+  <joint name="link6_to_gripper_tcp" type="fixed">
+    <parent link="link6"/>
+    <child link="gripper_tcp"/>
+    <origin xyz= "0 0 0.151" rpy = "0 0 0"/>  <!-- 0.145 + 0.006 camera flange disc -->
+  </joint>
+
+
+</robot>
