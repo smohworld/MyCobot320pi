@@ -25,7 +25,6 @@ moveit_simple_controller_manager:
     action_ns: gripper_cmd
     default: true
 
-# mycobot_driver: servo error ~1 deg, joint_states at 10 Hz, trajectories may be slowed down
 trajectory_execution:
   allowed_execution_duration_scaling: 2.0
   allowed_goal_duration_margin: 2.0
