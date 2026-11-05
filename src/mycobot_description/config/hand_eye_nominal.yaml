@@ -1,0 +1,27 @@
+# Nominal (CAD) mounting values for pro_320_pi_2022_force_gripper.urdf.xacro.
+# Copy this file (e.g. hand_eye.yaml), put the calibrated values in, and pass it with
+#   calibration_file:=/path/to/hand_eye.yaml
+# Units: metres, radians. rpy = fixed-axis roll-pitch-yaw as in URDF <origin>.
+
+# Hand-eye result: pose of camera_optical_frame (z forward, x right, y down) in link6.
+# Nominal: lens centre from camera_flange.stl, axes parallel to link6.
+link6_to_camera_optical:
+  x: 0.0
+  y: 0.0747
+  z: 0.016
+  roll: 0.0
+  pitch: 0.0
+  yaw: 0.0
+
+# Tool centre point in link6 (between the finger pads). 0.145 + 0.006 flange disc;
+# estimated from meshes, measure on the real gripper.
+link6_to_gripper_tcp:
+  x: 0.0
+  y: 0.0
+  z: 0.151
+  roll: 0.0
+  pitch: 0.0
+  yaw: 0.0
+
+# Yaw of the camera flange on the link6 face (only moves the flange/gripper meshes).
+camera_flange_yaw: 1.5708

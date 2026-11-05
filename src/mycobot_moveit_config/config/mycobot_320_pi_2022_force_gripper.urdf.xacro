@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mycobot_320_pi_2022_force_gripper">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import mycobot_320_pi_2022_force_gripper urdf file -->
+    <xacro:include filename="$(find mycobot_description)/urdf/mycobot_320_pi_2022/pro_320_pi_2022_force_gripper.urdf.xacro" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="mycobot_320_pi_2022_force_gripper.ros2_control.xacro" />
+
+
+    <xacro:mycobot_320_pi_2022_force_gripper_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>
