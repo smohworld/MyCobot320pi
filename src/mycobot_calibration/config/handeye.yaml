@@ -1,0 +1,47 @@
+# handeye_calibrator defaults (launch arguments override board_file, camera_calibration_file,
+# topics, board_guess_*, n_poses, poses_file, output_dir, auto_start).
+handeye_calibrator:
+  ros__parameters:
+    base_frame: base
+    flange_frame: link6
+    camera_frame: camera_optical_frame
+    ik_link: gripper_tcp          # tip of the MoveIt "arm" group
+    group: arm
+
+    # viewpoints on a cap above the board (camera looks at the board centre)
+    n_poses: 20                   # 15+ ; more averages out servo error (~1 deg)
+    distance_min: 0.24            # camera -> board centre [m]
+    distance_max: 0.36
+    tilt_min_deg: 10.0            # from the board normal; more tilt = better rotation variety
+    tilt_max_deg: 35.0
+    roll_range_deg: 30.0          # roll about the optical axis (+-), limited by the J6 window
+    aim_jitter: 0.25              # look-at point offset, fraction of the board size
+    max_incidence_deg: 50.0
+    image_margin_px: 25
+    min_visible_fraction: 0.8     # of the chessboard corners inside the image
+    min_camera_height: 0.08       # above table_z [m]
+    seed: 0
+    enough_feasible: 45           # collect this many reachable viewpoints, then pick the
+    max_candidates: 200           # n_poses most different ones (stop after this many tried)
+    ik_timeout: 0.1               # per /compute_ik call [s]
+
+    # MoveIt
+    add_table: true               # box under the robot in the planning scene
+    # Desk 110 x 60 cm; robot base on a 6 mm pedestal, 2 cm from the desk edge.
+    # Base mesh bottom is z=0, so the desk top is at z = -0.006.
+    table_z: -0.006
+    # Default: 1.5 x 1.5 m box centred on the robot. Also covers the area past the desk
+    # edge (conservative: the arm stays above desk height there too). For the exact desk,
+    # e.g. desk extending in +x with the robot 2 cm from its edge, centred left/right:
+    #   table_size_xy: [0.60, 1.10]   table_center_xy: [0.28, 0.0]
+    table_size_xy: [1.5, 1.5]
+    table_center_xy: [0.0, 0.0]
+    velocity_scaling: 0.3
+    accel_scaling: 0.3
+    planning_time: 5.0
+
+    # capture / solve
+    settle_time: 1.0              # wait after the motion before grabbing the image [s]
+    min_corners: 12
+    max_pnp_rms_px: 1.0
+    return_to_start: true

@@ -61,7 +61,7 @@ def setup(context):
     if lc('rviz').lower() in ('true', '1'):
         actions.append(Node(
             package='rviz2', executable='rviz2', output='log',
-            arguments=['-d', os.path.join(share, 'config', 'moveit.rviz')],
+            arguments=['-d', lc('rviz_config') or os.path.join(share, 'config', 'moveit.rviz')],
             parameters=[cfg.robot_description, cfg.robot_description_semantic,
                         cfg.robot_description_kinematics, cfg.planning_pipelines,
                         cfg.joint_limits]))
@@ -75,6 +75,7 @@ def generate_launch_description():
         'serial_port': '/dev/ttyUSB0',
         'calibration_file': '',        # hand_eye.yaml from mycobot_calibration ('' = nominal)
         'rviz': 'true',
+        'rviz_config': '',             # '' = config/moveit.rviz
     }
     return LaunchDescription(
         [DeclareLaunchArgument(k, default_value=v) for k, v in args.items()]
