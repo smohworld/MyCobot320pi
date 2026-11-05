@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mycobot_bridge</name>
+  <version>0.1.0</version>
+  <description>myCobot 320 driver (pymycobot socket / serial / fake) exposing FollowJointTrajectory and GripperCommand for MoveIt2</description>
+  <maintainer email="dhtjdalsqkqh@gmail.com">smoh</maintainer>
+  <license>BSD</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>mycobot_description</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- pymycobot: pip install pymycobot -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

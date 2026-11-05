@@ -1,0 +1,50 @@
+# mycobot_driver parameters. connection / ip / serial_port / use_gripper are set by
+# driver.launch.py arguments and override the values here.
+mycobot_driver:
+  ros__parameters:
+    connection: fake            # fake | socket | serial
+    ip: 192.168.0.10            # socket: Pi running Server_320.py
+    netport: 9000
+    serial_port: /dev/ttyUSB0   # serial: USB to the Atom/Basic board
+    baudrate: 115200
+
+    # hardware loop: setpoint streaming + state reads share one connection
+    loop_rate: 20.0             # Hz
+    read_divider_executing: 2   # read joint angles every N ticks while a trajectory runs
+    gripper_read_divider: 10    # read gripper every N ticks when idle
+
+    # trajectory following (send_angles with fresh mode 1)
+    stream_speed: 80            # send_angles speed 1..100 for streamed setpoints
+    lookahead: 0.1              # s, command the point this far ahead (servo lag)
+    min_step_deg: 0.1
+    max_joint_vel_deg: 30.0     # faster trajectories are stretched in time (see joint_limits.yaml)
+    # robot <-> URDF mapping: urdf_deg = sign * robot_deg + offset  (J1..J6)
+    # Keep identity unless the real arm and RViz disagree. Check on the real robot:
+    #   1) zero pose : robot at all 0 deg must look like RViz at all 0 (else fix offset)
+    #   2) direction : release_servos, turn each joint by hand, RViz must turn the same way
+    #                  (else set that joint's sign to -1.0)
+    joint_signs: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    joint_offsets_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # software joint limits [deg, URDF frame] (J1..J6). J6 +-90: the camera/gripper cable winds up beyond
+    # that. Same window as joint6output_to_joint6 in mycobot_moveit_config/joint_limits.yaml.
+    # Trajectories outside are rejected (INVALID_GOAL); commands are clamped to them.
+    joint_min_deg: [-168.0, -135.0, -145.0, -145.0, -168.0, -90.0]
+    joint_max_deg: [168.0, 135.0, 145.0, 145.0, 168.0, 90.0]
+    limit_margin_deg: 1.0
+    start_tolerance_deg: 5.0
+    goal_tolerance_deg: 2.0     # servo error is ~1 deg
+    goal_timeout: 3.0           # s after the trajectory end to reach goal_tolerance
+
+    # myGripper F100 force-control (pro) gripper, pymycobot set/get_pro_gripper_angle
+    use_gripper: true
+    gripper_id: 14
+    gripper_joint: gripper_controller
+    gripper_open_position: 1.0    # URDF joint value for gripper angle 100 (SRDF "open")
+    gripper_closed_position: 0.0  # URDF joint value for gripper angle 0   (SRDF "close")
+    gripper_speed: 50
+    gripper_tolerance: 5
+    gripper_timeout: 5.0
+
+    reconnect_after_failures: 20
+    fake_max_vel_deg: 120.0
