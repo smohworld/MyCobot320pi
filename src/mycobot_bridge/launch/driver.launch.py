@@ -56,7 +56,7 @@ def generate_launch_description():
         'serial_port': '/dev/ttyUSB0',
         'baudrate': '115200',
         'use_gripper': 'true',
-        'calibration_file': '',        # '' = mycobot_description/config/hand_eye_nominal.yaml
+        'calibration_file': '',        # '' = mycobot_description/config/hand_eye.yaml
         'rviz': 'true',
     }
     return LaunchDescription(

@@ -87,7 +87,7 @@ def generate_launch_description():
         'connection': 'socket',          # socket | serial (ignored with sim:=true)
         'ip': '192.168.0.10',
         'serial_port': '/dev/ttyUSB0',
-        'calibration_file': '',          # current hand_eye.yaml ('' = nominal CAD values)
+        'calibration_file': '',          # '' = mycobot_description/config/hand_eye.yaml
         'board_file': '',                # '' = installed copy of calibration/charuco_board.yaml
         'camera_calibration_file': '',   # '' = installed config/camera.yaml, none = camera_info
         'camera': 'true',                # start the OpenCV USB camera node

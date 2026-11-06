@@ -88,7 +88,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'calibration_file',
             default_value='',
-            description='hand-eye / TCP yaml (empty = config/hand_eye_nominal.yaml)',
+            description='hand-eye / TCP yaml (empty = config/hand_eye.yaml)',
         ),
         DeclareLaunchArgument(
             'gui',

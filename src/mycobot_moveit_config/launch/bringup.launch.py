@@ -73,7 +73,7 @@ def generate_launch_description():
         'connection': 'fake',          # fake | socket | serial
         'ip': '192.168.0.10',
         'serial_port': '/dev/ttyUSB0',
-        'calibration_file': '',        # hand_eye.yaml from mycobot_calibration ('' = nominal)
+        'calibration_file': '',        # '' = mycobot_description/config/hand_eye.yaml
         'rviz': 'true',
         'rviz_config': '',             # '' = config/moveit.rviz
     }

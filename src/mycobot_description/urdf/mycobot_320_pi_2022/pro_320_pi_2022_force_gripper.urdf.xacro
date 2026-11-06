@@ -3,9 +3,11 @@
 
   <!-- Calibrated / measured values (camera extrinsics, TCP, flange yaw) live in a yaml file
        so the hand-eye result can be dropped in without touching this file.
-       Override with: xacro ... calibration_file:=/path/to/hand_eye.yaml -->
+       Default: config/hand_eye.yaml (current hand-eye result, verified 2026-11-06).
+       Override with: xacro ... calibration_file:=/path/to/hand_eye.yaml
+       (config/hand_eye_nominal.yaml = CAD values) -->
   <xacro:arg name="calibration_file"
-             default="$(find mycobot_description)/config/hand_eye_nominal.yaml"/>
+             default="$(find mycobot_description)/config/hand_eye.yaml"/>
   <xacro:property name="calib" value="${xacro.load_yaml('$(arg calibration_file)')}"/>
   <xacro:property name="cam" value="${calib['link6_to_camera_optical']}"/>
   <xacro:property name="tcp" value="${calib['link6_to_gripper_tcp']}"/>
