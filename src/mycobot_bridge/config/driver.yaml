@@ -46,6 +46,14 @@ mycobot_driver:
     correction_speed: 30        # send_angles speed for the correction steps
     settle_time: 0.4            # s without motion = settled
     settle_motion_deg: 0.2
+    # feedforward: every command of a trajectory = point + ff_bias_deg + ff_dir_deg * sign(final - start)
+    # (per joint, URDF frame) so the arm usually ends within settle_tolerance with no correction.
+    # Fit on 12 pick/place moves 2026-11-06 (error at the first settle, target - actual):
+    # J2-J4 sag by gravity in either direction, J1/J5/J6 stop short in the direction of motion.
+    # Leave-one-out residual max 0.4-0.6 deg. All zeros = off. Re-fit if the gripper load changes.
+    ff_bias_deg: [0.0, 2.1, 1.1, 0.6, 0.0, 0.0]
+    ff_dir_deg: [0.5, 0.7, 0.2, 0.2, 0.35, 0.4]
+    ff_min_move_deg: 1.0        # joints moving less than this get no direction term
 
     # myGripper F100 force-control (pro) gripper, pymycobot set/get_pro_gripper_angle
     use_gripper: true

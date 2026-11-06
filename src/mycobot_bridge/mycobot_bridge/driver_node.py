@@ -69,6 +69,7 @@ class TrajJob:
         self.ref_q = None             # joints when they last moved (settle detection)
         self.ref_t = 0.0
         self.err0 = None              # error before the first correction [deg]
+        self.bias = np.zeros(6)       # feedforward added to every command [deg]
 
     @property
     def duration(self):
@@ -160,6 +161,15 @@ class MyCobotDriver(Node):
         self.corr_speed = p('correction_speed', 30).value          # send_angles speed
         self.settle_time = p('settle_time', 0.4).value             # [s] no motion = settled
         self.settle_motion = p('settle_motion_deg', 0.2).value     # 'no motion' threshold
+        # Feedforward: the servos stop at a repeatable offset from the target (gravity sag
+        # of J2-J4 + stopping short in the direction of motion). Every command of a
+        # trajectory gets bias = ff_bias_deg + ff_dir_deg * sign(final - start) so the arm
+        # usually ends within settle_tolerance without a correction. All zero = off.
+        self.ff_bias = np.array(p('ff_bias_deg', [0.0] * 6).value, dtype=float)
+        self.ff_dir = np.array(p('ff_dir_deg', [0.0] * 6).value, dtype=float)
+        self.ff_min_move = p('ff_min_move_deg', 1.0).value         # smaller moves: no dir term
+        if self.ff_bias.shape != (6,) or self.ff_dir.shape != (6,):
+            raise ValueError('ff_bias_deg and ff_dir_deg must be 6 values')
         self.gripper_joint = p('gripper_joint', 'gripper_controller').value
         self.gripper_open_pos = p('gripper_open_position', 1.0).value    # joint value = 100
         self.gripper_closed_pos = p('gripper_closed_position', 0.0).value  # joint value = 0
@@ -172,9 +182,11 @@ class MyCobotDriver(Node):
         self.state_timeout = p('state_timeout', 1.0).value      # [s]
         fake_vel = p('fake_max_vel_deg', 120.0).value
         fake_short = p('fake_stop_short_deg', [0.0] * 6).value   # fake servos stop this short
+        fake_sag = p('fake_sag_deg', [0.0] * 6).value            # fake servos end this far below
 
         if self.connection == 'fake':
-            self.robot = FakeRobot(max_vel_deg=fake_vel, stop_short_deg=fake_short)
+            self.robot = FakeRobot(max_vel_deg=fake_vel, stop_short_deg=fake_short,
+                                   sag_deg=fake_sag)
         elif self.connection in ('socket', 'serial'):
             self.robot = PyMyCobotRobot(self.connection, ip=ip, netport=netport,
                                         serial_port=serial_port, baudrate=baudrate,
@@ -399,7 +411,8 @@ class MyCobotDriver(Node):
         job.desired = job.sample(t)
 
         if t < job.duration:
-            target = job.sample(t + self.lookahead)
+            ref = job.sample(t + self.lookahead)
+            target = self._clip_cmd(ref + job.bias, ref)
             if job.last_sent is None or np.max(np.abs(target - job.last_sent)) >= self.min_step_deg:
                 self._send_angles(target)
                 job.last_sent = target
@@ -407,11 +420,11 @@ class MyCobotDriver(Node):
 
         final = job.positions[-1]
         if not job.final_sent:
-            self._send_angles(final)
+            job.cmd = self._clip_cmd(final + job.bias, final)
+            self._send_angles(job.cmd)
             job.final_sent = True
             job.final_sent_t = now
-            job.last_sent = final
-            job.cmd = final.copy()
+            job.last_sent = job.cmd
             return
         if self._q is None:
             return
@@ -433,8 +446,7 @@ class MyCobotDriver(Node):
                 if job.err0 is None:
                     job.err0 = emax
                 corr = np.where(np.abs(err) > self.corr_deadband, err, 0.0)
-                cmd = np.clip(job.cmd + corr, final - self.max_corr, final + self.max_corr)
-                job.cmd = np.clip(cmd, np.minimum(self.j_min, final), np.maximum(self.j_max, final))
+                job.cmd = self._clip_cmd(job.cmd + corr, final)
                 self._send_angles(job.cmd, self.corr_speed)
                 job.corrections += 1
                 job.final_sent_t = now
@@ -442,11 +454,17 @@ class MyCobotDriver(Node):
             else:
                 self._finish_goal(job, emax)
 
+    def _clip_cmd(self, cmd, ref):
+        """Keep a command within max_correction_deg of the trajectory point ref and in the
+        limits (ref itself may lie outside them, see _build_job)."""
+        cmd = np.clip(cmd, ref - self.max_corr, ref + self.max_corr)
+        return np.clip(cmd, np.minimum(self.j_min, ref), np.maximum(self.j_max, ref))
+
     def _finish_goal(self, job, emax, timeout=False):
         how = (f'{emax:.1f} deg after {job.corrections} correction(s) (was {job.err0:.1f})'
                if job.corrections else f'{emax:.1f} deg')
         if emax <= self.goal_tol:
-            if job.corrections:
+            if job.corrections or np.any(job.bias):
                 self.get_logger().info(f'goal reached: max joint error {how}')
             job.finish(FJT.SUCCESSFUL)
         else:
@@ -584,7 +602,11 @@ class MyCobotDriver(Node):
             d = float(np.max(np.abs(pos[0] - q_now)))
             times = np.array([0.0, max(d / self.max_joint_vel, 0.1)])
             pos = np.vstack([q_now, pos])
-        return TrajJob(times * scale, pos), ''
+        job = TrajJob(times * scale, pos)
+        move = pos[-1] - pos[0]
+        job.bias = self.ff_bias + self.ff_dir * np.where(np.abs(move) >= self.ff_min_move,
+                                                         np.sign(move), 0.0)
+        return job, ''
 
     def _exec_traj(self, goal_handle):
         result = FollowJointTrajectory.Result()

@@ -62,14 +62,18 @@ class RobotBackend:
 class FakeRobot(RobotBackend):
     """Kinematic simulation: joints move to the setpoint at speed% of max_vel_deg."""
 
-    def __init__(self, max_vel_deg=120.0, gripper_vel=100.0, stop_short_deg=None):
+    def __init__(self, max_vel_deg=120.0, gripper_vel=100.0, stop_short_deg=None, sag_deg=None):
         self._max_vel = max_vel_deg
         self._gripper_vel = gripper_vel
         # real servos stop a few deg before the target (in the direction of motion): set this
         # per joint to test the driver's settle correction without hardware
         self._short = list(stop_short_deg) if stop_short_deg else [0.0] * 6
+        # and end this far below the goal regardless of direction (gravity sag of J2-J4)
+        self._sag = list(sag_deg) if sag_deg else [0.0] * 6
         self._q = [0.0] * 6
         self._target = [0.0] * 6
+        self._goal = [0.0] * 6        # last commanded angles
+        self._dir = [0.0] * 6         # per joint direction of the commands (+-1, 0 = none yet)
         self._vel = max_vel_deg
         self._g = 100.0
         self._g_target = 100.0
@@ -96,10 +100,14 @@ class FakeRobot(RobotBackend):
     def send_angles(self, angles_deg, speed):
         self._step()
         goal = clamp_angles(angles_deg)
-        # stop `short` deg before a new goal, on the side the joint comes from
-        self._target = [g - (s if g > q + 1e-6 else -s if g < q - 1e-6 else 0.0)
-                        if abs(g - q) > s else q
-                        for g, q, s in zip(goal, self._q, self._short)]
+        # stop `short` deg before a new goal on the side the commands come from (direction
+        # of the previous goal -> this one; kept while the goal does not change) and `sag`
+        # below it in either direction
+        self._dir = [1.0 if g > pg + 1e-6 else -1.0 if g < pg - 1e-6 else d
+                     for g, pg, d in zip(goal, self._goal, self._dir)]
+        self._goal = list(goal)
+        self._target = [g - s * d - a if abs(g - q) > s else q
+                        for g, q, s, a, d in zip(goal, self._q, self._short, self._sag, self._dir)]
         self._vel = self._max_vel * max(1, min(100, speed)) / 100.0
         self._released = False
 
