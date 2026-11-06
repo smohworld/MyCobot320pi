@@ -125,3 +125,13 @@ class MoveItClient:
         req.scene.world.collision_objects = [co]
         res = _wait(self.scene.call_async(req), 5.0)
         return res is not None and res.success
+
+    def remove_object(self, name):
+        co = CollisionObject()
+        co.header.frame_id = self.base
+        co.id = name
+        co.operation = CollisionObject.REMOVE
+        req = ApplyPlanningScene.Request(scene=PlanningScene(is_diff=True))
+        req.scene.world.collision_objects = [co]
+        res = _wait(self.scene.call_async(req), 5.0)
+        return res is not None and res.success

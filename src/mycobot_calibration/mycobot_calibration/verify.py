@@ -40,7 +40,7 @@ class VerifyMixin:
         # ~1-3 deg), so a tighter max fails on arm error, not on the calibration.
         p('verify_max_corner_mm', 6.0)          # max corner spread
         p('verify_max_rms_mm', 3.0)             # rms corner spread
-        p('touch_hover', 0.02)                  # TCP height above the board at the check [m]
+        p('touch_hover', 0.04)                  # TCP height above the board at the check [m]
         p('touch_approach', 0.08)               # approach height [m]
         p('touch_pause', 8.0)                   # time to measure at each corner [s]
         p('touch_velocity_scaling', 0.1)

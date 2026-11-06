@@ -27,6 +27,7 @@ setup(
             'sim_camera = mycobot_calibration.sim_camera_node:main',
             'intrinsics_calib = mycobot_calibration.intrinsics_calib:main',
             'goto_lookdown = mycobot_calibration.goto_lookdown:main',
+            'red_cube_hover = mycobot_calibration.red_cube_hover:main',
         ],
     },
 )
