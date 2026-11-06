@@ -1,7 +1,7 @@
 """USB camera via OpenCV VideoCapture -> /camera/image_raw + /camera/camera_info.
 
   ros2 run mycobot_calibration camera --ros-args -p device:=0 \
-      -p camera_calibration_file:=~/camera_calib/camera.yaml
+      -p camera_calibration_file:=$(ros2 pkg prefix mycobot_calibration)/share/mycobot_calibration/config/camera.yaml
 
 camera_info is filled from camera_calibration_file (OpenCV / ROS yaml); without it,
 camera_info is not published (the hand-eye node can still read the same file itself).

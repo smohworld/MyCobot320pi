@@ -3,9 +3,11 @@
 Simulation (fake arm + synthetic camera, runs automatically with auto_start):
   ros2 launch mycobot_calibration handeye.launch.py sim:=true auto_start:=true
 
-Real robot (USB camera via OpenCV, intrinsics from your OpenCV camera calibration):
+Real robot (USB camera via OpenCV, intrinsics from config/camera.yaml by default):
   ros2 launch mycobot_calibration handeye.launch.py connection:=socket ip:=192.168.0.10 \
-      camera_calibration_file:=~/camera_calib/camera.yaml camera_device:=0
+      camera_device:=0
+  other intrinsics: camera_calibration_file:=<yaml>, or camera_calibration_file:=none to
+  take them from camera_info_topic
   ros2 launch mycobot_calibration handeye.launch.py connection:=serial serial_port:=/dev/ttyUSB0 ...
   own camera driver instead: camera:=false image_topic:=... (camera_info_topic or the file)
 then
@@ -31,6 +33,10 @@ def setup(context):
     board_file = os.path.expanduser(lc('board_file')) or os.path.join(
         share, 'config', 'charuco_board.yaml')
     calib_file = os.path.expanduser(lc('camera_calibration_file'))
+    if not calib_file:
+        calib_file = os.path.join(share, 'config', 'camera.yaml')
+    elif calib_file.lower() == 'none':
+        calib_file = ''                  # intrinsics from camera_info_topic
     board_xyz = [float(v) for v in lc('board_xyz').split(',')]
 
     actions = [IncludeLaunchDescription(
@@ -83,7 +89,7 @@ def generate_launch_description():
         'serial_port': '/dev/ttyUSB0',
         'calibration_file': '',          # current hand_eye.yaml ('' = nominal CAD values)
         'board_file': '',                # '' = installed copy of calibration/charuco_board.yaml
-        'camera_calibration_file': '',   # OpenCV / ROS intrinsics yaml
+        'camera_calibration_file': '',   # '' = installed config/camera.yaml, none = camera_info
         'camera': 'true',                # start the OpenCV USB camera node
         'camera_device': '0',
         'width': '640',

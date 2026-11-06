@@ -1,0 +1,57 @@
+# camera intrinsics, 640x480 (from ~/camera_calib2/camera_pruned.yaml, 2026-11-06). reprojection rms 0.355 px
+# hand-eye check: PnP 0.42 px, board scatter 2.82 mm (camera_calib2/camera.yaml 5.43 mm, camera_calib/camera.yaml 6.10 mm)
+image_width: 640
+image_height: 480
+camera_name: camera
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 471.8415463056164
+  - 0.0
+  - 309.991386349175
+  - 0.0
+  - 470.08172920193283
+  - 237.43735356277085
+  - 0.0
+  - 0.0
+  - 1.0
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data:
+  - 0.048622143784871716
+  - -0.07250367958331713
+  - -0.0015534284482151923
+  - -0.006042744352963593
+  - 0.0
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+projection_matrix:
+  rows: 3
+  cols: 4
+  data:
+  - 471.8415463056164
+  - 0.0
+  - 309.991386349175
+  - 0.0
+  - 0.0
+  - 470.08172920193283
+  - 237.43735356277085
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
