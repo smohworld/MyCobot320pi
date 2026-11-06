@@ -25,6 +25,8 @@ setup(
             'handeye = mycobot_calibration.handeye_node:main',
             'camera = mycobot_calibration.camera_node:main',
             'sim_camera = mycobot_calibration.sim_camera_node:main',
+            'intrinsics_calib = mycobot_calibration.intrinsics_calib:main',
+            'goto_lookdown = mycobot_calibration.goto_lookdown:main',
         ],
     },
 )

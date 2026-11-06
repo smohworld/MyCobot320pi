@@ -62,9 +62,12 @@ class RobotBackend:
 class FakeRobot(RobotBackend):
     """Kinematic simulation: joints move to the setpoint at speed% of max_vel_deg."""
 
-    def __init__(self, max_vel_deg=120.0, gripper_vel=100.0):
+    def __init__(self, max_vel_deg=120.0, gripper_vel=100.0, stop_short_deg=None):
         self._max_vel = max_vel_deg
         self._gripper_vel = gripper_vel
+        # real servos stop a few deg before the target (in the direction of motion): set this
+        # per joint to test the driver's settle correction without hardware
+        self._short = list(stop_short_deg) if stop_short_deg else [0.0] * 6
         self._q = [0.0] * 6
         self._target = [0.0] * 6
         self._vel = max_vel_deg
@@ -92,7 +95,11 @@ class FakeRobot(RobotBackend):
 
     def send_angles(self, angles_deg, speed):
         self._step()
-        self._target = clamp_angles(angles_deg)
+        goal = clamp_angles(angles_deg)
+        # stop `short` deg before a new goal, on the side the joint comes from
+        self._target = [g - (s if g > q + 1e-6 else -s if g < q - 1e-6 else 0.0)
+                        if abs(g - q) > s else q
+                        for g, q, s in zip(goal, self._q, self._short)]
         self._vel = self._max_vel * max(1, min(100, speed)) / 100.0
         self._released = False
 
@@ -134,6 +141,7 @@ class PyMyCobotRobot(RobotBackend):
         self.log = logger
         self.mc = None
         self._gripper_speed = None
+        self.drained_bytes = 0
 
     def connect(self):
         if self.connection == 'socket':
@@ -159,7 +167,44 @@ class PyMyCobotRobot(RobotBackend):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _drain(self):
+        """Discard bytes left in the input buffer before a request.
+
+        pymycobot reads ONE recv() per request and matches it by command id. A late reply
+        (timeout, gripper not answering, a second client on the Pi server) stays in the
+        buffer and is read as the answer to the NEXT request; the id check then fails, the
+        call returns -1 and every later read is shifted by one -> get_angles keeps failing
+        while send_angles still moves the arm."""
+        n = 0
+        try:
+            if self.connection == 'socket':
+                s = self.mc.sock
+                s.setblocking(False)
+                try:
+                    while True:
+                        d = s.recv(4096)
+                        if not d:
+                            break
+                        n += len(d)
+                except (BlockingIOError, InterruptedError):
+                    pass
+                finally:
+                    s.setblocking(True)
+            else:
+                sp = self.mc._serial_port
+                n = sp.in_waiting
+                if n:
+                    sp.reset_input_buffer()
+        except (AttributeError, OSError):
+            return
+        if n:
+            self.drained_bytes += n
+            if self.log is not None:
+                self.log.warn(f'discarded {n} stale bytes from the robot connection '
+                              '(late reply / reply desync)', throttle_duration_sec=2.0)
+
     def get_angles(self):
+        self._drain()
         a = self.mc.get_angles()
         if not isinstance(a, list) or len(a) != 6:
             return None
@@ -167,14 +212,17 @@ class PyMyCobotRobot(RobotBackend):
 
     def send_angles(self, angles_deg, speed):
         angles = [round(a, 2) for a in clamp_angles(angles_deg)]
+        self._drain()
         self.mc.send_angles(angles, int(max(1, min(100, speed))))
 
     def stop(self):
+        self._drain()
         self.mc.stop()
 
     def get_gripper(self):
         if not self.use_gripper:
             return None
+        self._drain()
         v = self.mc.get_pro_gripper_angle(self.gripper_id)
         if not isinstance(v, int) or v < 0 or v > 100:
             return None

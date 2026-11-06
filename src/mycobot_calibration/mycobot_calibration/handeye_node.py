@@ -9,6 +9,7 @@ Services (std_srvs/Trigger) under /handeye_calibrator/:
   solve    solve with the samples so far
   clear    forget plan and samples
   abort    stop `run` (cancels the current motion)
+  verify_views / verify_touch   check camera -> base after calibration (verify.py)
 
 Intrinsics: camera_calibration_file (OpenCV / ROS yaml from your camera calibration)
 or, if empty, camera_info_topic.
@@ -45,6 +46,7 @@ from mycobot_calibration.geometry import (
     T_to_xyzrpy, fill_pose_msg, fill_transform_msg, inv, rot_angle, transform_msg_to_T)
 from mycobot_calibration.intrinsics import load_intrinsics
 from mycobot_calibration.moveit_client import MoveItClient
+from mycobot_calibration.verify import VerifyMixin
 from mycobot_calibration.pose_generator import (
     ViewpointGenerator, board_pose_flat, camera_roll, order_by_joint_distance,
     rotation_spread_deg, select_diverse)
@@ -59,7 +61,7 @@ def _Tl(T):
     return [[float(v) for v in row] for row in T]
 
 
-class HandEyeCalibrator(Node):
+class HandEyeCalibrator(VerifyMixin, Node):
 
     def __init__(self):
         super().__init__('handeye_calibrator')
@@ -91,11 +93,17 @@ class HandEyeCalibrator(Node):
         p('enough_feasible', 45)                      # reachable viewpoints to choose from
         p('max_candidates', 200)                      # viewpoints tried at most
         p('ik_timeout', 0.1)                          # per /compute_ik call [s]
-        p('board_guess_xyz', [0.22, 0.0, -0.006])         # used when the board is not visible
+        # keep the arm in the start configuration: reject IK solutions farther than this
+        # from the start pose, per joint J1..J6 [deg] (<= 0: no limit). Avoids elbow/wrist
+        # flips and big J1 swings between viewpoints (cable wrap, wide sweeps).
+        p('max_joint_dev_deg', [60.0, 90.0, 70.0, 90.0, 90.0, 90.0])
+        p('board_guess_xyz', [0.22, 0.0, -0.007])         # used when the board is not visible
         p('board_guess_yaw', 0.0)
         # MoveIt
         p('add_table', True)
-        p('table_z', -0.006)                          # table top in base [m]
+        p('table_z', -0.007)                          # table top in base [m]
+        # planning keeps the robot this far above the desk (the arm is ~3-6 mm accurate)
+        p('table_margin', 0.012)                      # [m]
         p('table_size_xy', [1.5, 1.5])                # [m]
         p('table_center_xy', [0.0, 0.0])              # box centre in base [m]
         p('velocity_scaling', 0.3)
@@ -103,6 +111,13 @@ class HandEyeCalibrator(Node):
         p('planning_time', 5.0)
         # capture / solve
         p('settle_time', 1.0)
+        # joint_states must be this close to the planned pose before capturing [deg]. Keep it
+        # above the driver's goal_tolerance_deg (2.0): real servos stop ~1-2 deg off target.
+        # The sample uses the MEASURED joints (TF), so this check is only a sanity check.
+        p('pose_tolerance_deg', 6.0)
+        # joint_states older than this count as missing (driver stops publishing when it
+        # cannot read the joints; a frozen last value must not be used for a sample)
+        p('joint_state_timeout', 1.5)                 # [s] > driver publish gap on a slow link
         p('min_corners', 12)
         p('max_pnp_rms_px', 1.0)
         p('poses_file', '')                           # replay planned_poses.yaml
@@ -125,6 +140,7 @@ class HandEyeCalibrator(Node):
         self.lock = threading.Lock()
         self.latest = None                            # (stamp_sec, image)
         self.js = {}
+        self.js_t = None                              # monotonic time of the last joint_states
         self.plan = []                                # list of (T_base_cam, q)
         self.plan_status = []
         self.samples = []
@@ -155,6 +171,8 @@ class HandEyeCalibrator(Node):
                          ('capture', self._srv_capture), ('solve', self._srv_solve),
                          ('clear', self._srv_clear), ('abort', self._srv_abort)]:
             self.create_service(Trigger, '~/' + name, fn, callback_group=cb)
+        self._arm_joints = ARM_JOINTS
+        self._init_verify(cb)
         if g('auto_start'):
             self._auto = self.create_timer(3.0, self._auto_start, callback_group=cb)
         self.status('ready: call ~/plan (preview), ~/run (auto) or ~/capture (manual)')
@@ -184,6 +202,8 @@ class HandEyeCalibrator(Node):
     def _on_js(self, msg):
         with self.lock:
             self.js.update(zip(msg.name, msg.position))
+            if all(n in msg.name for n in ARM_JOINTS):
+                self.js_t = time.monotonic()
 
     # ------------------------------------------------------------ helpers
     def status(self, text, level='info'):
@@ -203,7 +223,14 @@ class HandEyeCalibrator(Node):
         except Exception:  # noqa: BLE001
             return None
 
+    def js_age(self):
+        with self.lock:
+            return float('inf') if self.js_t is None else time.monotonic() - self.js_t
+
     def current_q(self):
+        """Arm joints [rad], or None when joint_states are missing or stale."""
+        if self.js_age() > float(self.g('joint_state_timeout')):
+            return None
         with self.lock:
             if not all(n in self.js for n in ARM_JOINTS):
                 return None
@@ -309,17 +336,25 @@ class HandEyeCalibrator(Node):
                                        self.g('board_guess_yaw'))
         self.status('board not visible: using board_guess_xyz / board_guess_yaw', 'warn')
 
-    def make_plan(self):
+    def add_table(self):
+        """Table box in the planning scene, its top raised by table_margin: the arm is only
+        ~3-6 mm accurate, so MoveIt must keep that much (and more) away from the real desk."""
+        g = self.g
+        if not g('add_table'):
+            return
+        z = float(g('table_z')) + float(g('table_margin'))
+        cx, cy = (float(v) for v in g('table_center_xy'))
+        sx, sy = (float(v) for v in g('table_size_xy'))
+        ok = self.moveit.add_box('calibration_table', [cx, cy, z - 0.025], [sx, sy, 0.05])
+        self.status(f"table added to the planning scene (desk z={g('table_z'):.3f} m, "
+                    f"collision top z={z:.3f} m incl. table_margin)" if ok else
+                    'could not add the table to the planning scene', 'info' if ok else 'warn')
+
+    def make_plan(self, seed=None, n_poses=None, use_poses_file=True):
         if not self.wait_ready():
             return False
         g = self.g
-        if g('add_table'):
-            z = float(g('table_z'))
-            cx, cy = (float(v) for v in g('table_center_xy'))
-            sx, sy = (float(v) for v in g('table_size_xy'))
-            ok = self.moveit.add_box('calibration_table', [cx, cy, z - 0.025], [sx, sy, 0.05])
-            self.status(f'table added to the planning scene (top z={z:.3f} m)' if ok else
-                        'could not add the table to the planning scene', 'info' if ok else 'warn')
+        self.add_table()
         q0 = self.current_q()
         self.start_q = q0
         X = self.lookup(self.flange, self.cam)
@@ -328,7 +363,9 @@ class HandEyeCalibrator(Node):
             self.status(f"no TF {self.flange}->{g('ik_link')}", 'error')
             return False
 
-        if g('poses_file'):
+        n_poses = int(g('n_poses') if n_poses is None else n_poses)
+        seed = int(g('seed') if seed is None else seed)
+        if use_poses_file and g('poses_file'):
             with open(os.path.expanduser(g('poses_file'))) as f:
                 d = yaml.safe_load(f)
             T_bl6_now = self.lookup(self.base, self.flange)
@@ -338,19 +375,22 @@ class HandEyeCalibrator(Node):
             self.status(f"loaded {len(self.plan)} poses from {g('poses_file')}")
         else:
             self.estimate_board()
-            gen = ViewpointGenerator(self.target, g('n_poses'),
+            gen = ViewpointGenerator(self.target, n_poses,
                                      (g('distance_min'), g('distance_max')),
                                      (g('tilt_min_deg'), g('tilt_max_deg')),
-                                     g('roll_range_deg'), g('aim_jitter'), g('seed'))
+                                     g('roll_range_deg'), g('aim_jitter'), seed)
             T_cam_now = self.lookup(self.base, self.flange) @ X
             ref = gen.reference_frame(self.T_board, T_cam_now[:3, 3])
             ref_roll = camera_roll(T_cam_now, ref)
-            n_want = int(g('n_poses'))
+            n_want = n_poses
             enough = max(n_want, int(g('enough_feasible')))
             self.status(f'planning: collecting up to {enough} reachable viewpoints '
                         f'(MoveIt IK, collision checked), then picking the {n_want} most '
                         'different ones ...')
             feasible, tried, t0 = [], 0, time.monotonic()
+            dev = np.radians(np.asarray(g('max_joint_dev_deg'), float))
+            dev = np.where(dev > 0, dev, np.inf)
+            far = 0                                   # IK solutions outside the window
             for i, cands in gen.slots(self.T_board, ref_roll, max_slots=int(g('max_candidates'))):
                 if self._abort.is_set() or len(feasible) >= enough:
                     break
@@ -366,24 +406,31 @@ class HandEyeCalibrator(Node):
                     T_ik = T_cam @ inv(X) @ T_l6_ik
                     q = self.moveit.compute_ik(T_ik, g('ik_link'), ARM_JOINTS, q0,
                                                timeout=float(g('ik_timeout')))
-                    if q is not None:
-                        feasible.append((T_cam, np.array(q)))
-                        break
+                    if q is None:
+                        continue
+                    if np.any(np.abs(np.asarray(q) - np.asarray(q0)) > dev):
+                        far += 1                      # reachable, but in another arm config
+                        continue
+                    feasible.append((T_cam, np.array(q)))
+                    break
                 if tried % 20 == 0:
                     self.get_logger().info(f'  {tried} viewpoints tried, {len(feasible)} reachable')
             self.get_logger().info(f'{len(feasible)} reachable of {tried} viewpoints tried '
-                                   f'({time.monotonic() - t0:.0f} s)')
+                                   f'({time.monotonic() - t0:.0f} s), {far} IK solutions '
+                                   'rejected by max_joint_dev_deg')
             plan = select_diverse(feasible, n_want, q0)
-            if len(plan) < 3:
+            if len(plan) < min(3, n_want):        # verify_touch asks for a single view
                 self.status(f'only {len(plan)} reachable viewpoints: move the board closer to '
-                            'the robot or adjust distance_*/tilt_* / board_guess_*', 'error')
+                            'the robot or adjust distance_*/tilt_* / board_guess_*'
+                            + (f' ({far} rejected by max_joint_dev_deg: start with the camera '
+                               'looking at the board, or widen it)' if far else ''), 'error')
                 self.plan, self.plan_status = plan, ['failed'] * len(plan)
                 self.publish_markers()
                 return False
             self.plan = order_by_joint_distance(q0, plan)
             Tg = [T @ inv(X) for T, _ in self.plan]
             mx, med = rotation_spread_deg(Tg)
-            self.status(f'planned {len(self.plan)}/{g("n_poses")} poses '
+            self.status(f'planned {len(self.plan)}/{n_poses} poses '
                         f'(chosen from {len(feasible)} reachable, {tried} tried), flange rotation '
                         f'spread max {mx:.0f} / median {med:.0f} deg')
             if mx < 30:
@@ -398,8 +445,10 @@ class HandEyeCalibrator(Node):
         time.sleep(float(self.g('settle_time')))
         img = self.fresh_image(self.now())
         T_bl6 = self.lookup(self.base, self.flange)
-        if img is None or T_bl6 is None:
-            self.status('no fresh image / TF', 'error')
+        q = self.current_q()
+        if img is None or T_bl6 is None or q is None:
+            self.status('no fresh image / TF' if q is not None else
+                        f'joint_states stale ({self.js_age():.1f} s): sample rejected', 'error')
             return False
         det = self.target.detect(img, self.K, self.D, self.g('min_corners'))
         self._publish_debug(img, det)
@@ -411,7 +460,7 @@ class HandEyeCalibrator(Node):
         self.samples.append({
             'T_base_link6': T_bl6, 'T_cam_board': det['T_cam_board'],
             'ids': det['ids'].reshape(-1), 'pixels': det['corners'].reshape(-1, 2).astype(float),
-            'K': self.K.copy(), 'D': self.D.copy(), 'q': self.current_q(), 'pose_index': idx,
+            'K': self.K.copy(), 'D': self.D.copy(), 'q': q, 'pose_index': idx,
             'pnp_rms': det['rms']})
         self._ensure_run_dir()
         cv2.imwrite(os.path.join(self.run_dir, 'images', f'{k:02d}.png'), img)
@@ -528,9 +577,10 @@ class HandEyeCalibrator(Node):
         return self.moveit.move_joints(ARM_JOINTS, q, g('velocity_scaling'), g('accel_scaling'),
                                        g('planning_time'))
 
-    def _at_pose(self, q, i, n, tol_deg=1.5, timeout=3.0):
+    def _at_pose(self, q, i, n, timeout=3.0):
         """joint_states must agree with the planned pose before an image is used
         (catches a stale / second /joint_states publisher or a motion that stopped early)."""
+        tol_deg = float(self.g('pose_tolerance_deg'))
         t0 = time.monotonic()
         err = float('inf')
         while time.monotonic() - t0 < timeout:
@@ -540,8 +590,9 @@ class HandEyeCalibrator(Node):
                 if err <= tol_deg:
                     return True
             time.sleep(0.1)
-        self.status(f'pose {i + 1}/{n}: joint_states {err:.1f} deg away from the planned pose, '
-                    'skipped (is another node publishing /joint_states?)', 'warn')
+        self.status(f'pose {i + 1}/{n}: joint_states {err:.1f} deg away from the planned pose '
+                    f'(> pose_tolerance_deg {tol_deg:.1f}), skipped (servo not settled, or '
+                    'another node publishing /joint_states?)', 'warn')
         return False
 
     def _retry_capture(self, i):
@@ -563,8 +614,12 @@ class HandEyeCalibrator(Node):
             self.status(f'pose {i + 1}/{n}: moving')
             ok, msg = self._move(q)
             if not ok:
-                self.status(f'pose {i + 1}/{n}: motion failed ({msg})', 'warn')
-            if ok and not self._abort.is_set():
+                # the driver aborts (CONTROL_FAILED) when a servo stops just outside its
+                # goal_tolerance_deg; the sample uses the measured joints, so it is still
+                # usable if the arm is within pose_tolerance_deg of the planned pose
+                self.status(f'pose {i + 1}/{n}: motion failed ({msg}), checking where the '
+                            'arm stopped', 'warn')
+            if not self._abort.is_set():
                 ok = self._at_pose(q, i, n) and (self.capture_here(i) or self._retry_capture(i))
             self.plan_status[i] = 'ok' if ok else 'failed'
             self.publish_markers()

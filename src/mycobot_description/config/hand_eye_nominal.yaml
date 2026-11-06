@@ -13,15 +13,21 @@ link6_to_camera_optical:
   pitch: 0.0
   yaw: 0.0
 
-# Tool centre point in link6 (between the finger pads). 0.145 + 0.006 flange disc;
-# estimated from meshes, measure on the real gripper.
+# Tool centre point in link6: finger TIP. Measured 2026-11-06: 165 mm from the link6
+# face (camera flange) to the finger tip (mesh estimate was 0.151).
 link6_to_gripper_tcp:
   x: 0.0
   y: 0.0
-  z: 0.151
+  z: 0.165
   roll: 0.0
   pitch: 0.0
   yaw: 0.0
 
 # Yaw of the camera flange on the link6 face (only moves the flange/gripper meshes).
 camera_flange_yaw: 1.5708
+
+# Height of the J2 axis (joint2_to_joint1 origin) above the base mesh bottom. CAD 0.1739.
+# Measured 2026-11-06: J2 axis 188 mm above the desk, base on a 7 mm pedestal -> 0.181.
+# (A wrong value shifts everything seen by the camera up/down by the same amount: the board
+#  came out ~8 mm below the desk with 0.1739.)
+base_to_j2_height: 0.181

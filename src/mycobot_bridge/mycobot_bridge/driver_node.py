@@ -63,6 +63,12 @@ class TrajJob:
         self.done = threading.Event()
         self.error_code = FJT.SUCCESSFUL
         self.error_string = ''
+        # settle correction (after the trajectory end)
+        self.cmd = None               # last commanded final angles (target + corrections)
+        self.corrections = 0
+        self.ref_q = None             # joints when they last moved (settle detection)
+        self.ref_t = 0.0
+        self.err0 = None              # error before the first correction [deg]
 
     @property
     def duration(self):
@@ -144,6 +150,16 @@ class MyCobotDriver(Node):
         self.start_tol = p('start_tolerance_deg', 5.0).value
         self.goal_tol = p('goal_tolerance_deg', 2.0).value
         self.goal_timeout = p('goal_timeout', 3.0).value         # [s] after trajectory end
+        # Settle correction: the servos stop 2-3 deg short of the target. Once the arm has
+        # settled, command target + remaining error (per joint, accumulated) so it ends up
+        # on the target. max_corrections 0 disables it.
+        self.settle_tol = p('settle_tolerance_deg', 0.5).value     # done when all within
+        self.max_corrections = p('max_corrections', 3).value
+        self.corr_deadband = p('correction_deadband_deg', 0.3).value  # leave smaller errors
+        self.max_corr = p('max_correction_deg', 6.0).value         # |command - target| cap
+        self.corr_speed = p('correction_speed', 30).value          # send_angles speed
+        self.settle_time = p('settle_time', 0.4).value             # [s] no motion = settled
+        self.settle_motion = p('settle_motion_deg', 0.2).value     # 'no motion' threshold
         self.gripper_joint = p('gripper_joint', 'gripper_controller').value
         self.gripper_open_pos = p('gripper_open_position', 1.0).value    # joint value = 100
         self.gripper_closed_pos = p('gripper_closed_position', 0.0).value  # joint value = 0
@@ -151,10 +167,14 @@ class MyCobotDriver(Node):
         self.gripper_tol = p('gripper_tolerance', 5).value       # 0..100 units
         self.gripper_timeout = p('gripper_timeout', 5.0).value
         self.reconnect_after = p('reconnect_after_failures', 20).value
+        # Safety: no successful get_angles for this long -> stop the arm, abort the trajectory,
+        # stop publishing joint_states (a frozen state lets MoveIt plan from a wrong start).
+        self.state_timeout = p('state_timeout', 1.0).value      # [s]
         fake_vel = p('fake_max_vel_deg', 120.0).value
+        fake_short = p('fake_stop_short_deg', [0.0] * 6).value   # fake servos stop this short
 
         if self.connection == 'fake':
-            self.robot = FakeRobot(max_vel_deg=fake_vel)
+            self.robot = FakeRobot(max_vel_deg=fake_vel, stop_short_deg=fake_short)
         elif self.connection in ('socket', 'serial'):
             self.robot = PyMyCobotRobot(self.connection, ip=ip, netport=netport,
                                         serial_port=serial_port, baudrate=baudrate,
@@ -175,6 +195,10 @@ class MyCobotDriver(Node):
         self._grip = None
         self._requests = []
         self._fail_count = 0
+        self._q_t = None               # monotonic time of the last successful angle read
+        self._read_fails = 0           # consecutive failed angle reads
+        self._stale_logged = False
+        self._grip_fails = 0
         self._wait_first_state()
         self._warn_if_outside_limits()
 
@@ -213,9 +237,9 @@ class MyCobotDriver(Node):
             return None
         return self.signs * np.array(q) + self.offsets
 
-    def _send_angles(self, urdf_deg):
+    def _send_angles(self, urdf_deg, speed=None):
         robot_deg = (np.asarray(urdf_deg) - self.offsets) * self.signs
-        self.robot.send_angles(robot_deg.tolist(), self.stream_speed)
+        self.robot.send_angles(robot_deg.tolist(), self.stream_speed if speed is None else speed)
 
     # ------------------------------------------------------------------ setup
     def _wait_first_state(self):
@@ -225,6 +249,7 @@ class MyCobotDriver(Node):
             dt = time.monotonic() - t
             if q is not None:
                 self._q = q
+                self._q_t = time.monotonic()
                 self.get_logger().info(f'get_angles round trip {dt * 1000:.0f} ms')
                 break
             time.sleep(0.2)
@@ -232,6 +257,7 @@ class MyCobotDriver(Node):
             raise RuntimeError('could not read joint angles from the robot')
         if self.use_gripper:
             self._g = self.robot.get_gripper()
+            self._grip_fails = 0 if self._g is not None else 3
             if self._g is None:
                 self.get_logger().warn('could not read gripper angle (use_gripper:=false if '
                                        'no force-control gripper is attached)')
@@ -276,6 +302,8 @@ class MyCobotDriver(Node):
                 self._fail_count = 0
             except Exception as e:  # noqa: BLE001  (socket/serial errors)
                 self._fail_count += 1
+                self._read_fails = max(self._read_fails, 1)   # no good read this tick
+                self._check_stale(self._traj)
                 if t_loop - log_t > 2.0:
                     self.get_logger().error(f'hardware error: {e!r}')
                     log_t = t_loop
@@ -322,14 +350,32 @@ class MyCobotDriver(Node):
 
         executing = traj is not None and not traj.done.is_set()
         if not executing or tick % self.read_divider == 0:
-            q = self._read_angles()
-            if q is not None:
-                self._q = q
+            q = None
+            try:
+                q = self._read_angles()
+            finally:                  # exceptions count as failed reads too
+                if q is not None:
+                    self._q, self._q_t = q, time.monotonic()
+                    if self._read_fails or self._stale_logged:
+                        self.get_logger().info(
+                            f'get_angles recovered after {self._read_fails} failed reads')
+                    self._read_fails, self._stale_logged = 0, False
+                else:
+                    self._read_fails += 1
+                    self._check_stale(traj)
+        # An absent / silent gripper times out and its late replies desync the connection:
+        # after 3 failed reads poll it only while a gripper command runs.
         g_div = 2 if grip is not None else self.gripper_read_divider
-        if self.use_gripper and tick % g_div == 0:
+        poll_gripper = grip is not None or self._grip_fails < 3
+        if self.use_gripper and poll_gripper and tick % g_div == 0:
             g = self.robot.get_gripper()
             if g is not None:
-                self._g = g
+                self._g, self._grip_fails = g, 0
+            else:
+                self._grip_fails += 1
+                if self._grip_fails == 3:
+                    self.get_logger().warn('gripper not answering: idle gripper polling '
+                                           'stopped (use_gripper:=false if none is attached)')
         self._publish_state()
 
         with self._lock:
@@ -365,16 +411,48 @@ class MyCobotDriver(Node):
             job.final_sent = True
             job.final_sent_t = now
             job.last_sent = final
-        if self._q is not None and np.max(np.abs(self._q - final)) <= self.goal_tol:
+            job.cmd = final.copy()
+            return
+        if self._q is None:
+            return
+        q = self._q
+        err = final - q
+        emax = float(np.max(np.abs(err)))
+        if emax <= self.settle_tol:
+            self._finish_goal(job, emax)
+            return
+        # settled = the joints have not moved for settle_time since the last command
+        if job.ref_q is None or np.max(np.abs(q - job.ref_q)) > self.settle_motion:
+            job.ref_q, job.ref_t = q.copy(), now
+        settled = (now - job.ref_t >= self.settle_time and
+                   now - job.final_sent_t >= self.settle_time)
+        if t > job.duration + self.goal_timeout:
+            self._finish_goal(job, emax, timeout=True)
+        elif settled:
+            if job.corrections < self.max_corrections:
+                if job.err0 is None:
+                    job.err0 = emax
+                corr = np.where(np.abs(err) > self.corr_deadband, err, 0.0)
+                cmd = np.clip(job.cmd + corr, final - self.max_corr, final + self.max_corr)
+                job.cmd = np.clip(cmd, np.minimum(self.j_min, final), np.maximum(self.j_max, final))
+                self._send_angles(job.cmd, self.corr_speed)
+                job.corrections += 1
+                job.final_sent_t = now
+                job.ref_q = None
+            else:
+                self._finish_goal(job, emax)
+
+    def _finish_goal(self, job, emax, timeout=False):
+        how = (f'{emax:.1f} deg after {job.corrections} correction(s) (was {job.err0:.1f})'
+               if job.corrections else f'{emax:.1f} deg')
+        if emax <= self.goal_tol:
+            if job.corrections:
+                self.get_logger().info(f'goal reached: max joint error {how}')
             job.finish(FJT.SUCCESSFUL)
-        elif t > job.duration + self.goal_timeout:
-            err = np.max(np.abs(self._q - final)) if self._q is not None else float('nan')
+        else:
             job.finish(FJT.GOAL_TOLERANCE_VIOLATED,
-                       f'goal not reached: max joint error {err:.1f} deg > {self.goal_tol} deg')
-        elif now - job.final_sent_t > 1.0:
-            # servo may have stopped just outside the window; nudge it again once a second
-            self._send_angles(final)
-            job.final_sent_t = now
+                       f'goal not reached{" (timeout)" if timeout else ""}: max joint error '
+                       f'{how} > {self.goal_tol} deg')
 
     def _step_gripper(self, job, now):
         if job.done.is_set():
@@ -402,9 +480,37 @@ class MyCobotDriver(Node):
         if elapsed > self.gripper_timeout:
             job.finish(False, msg='gripper timeout')
 
-    def _publish_state(self):
-        if self._q is None:
+    def state_age(self):
+        return float('inf') if self._q_t is None else time.monotonic() - self._q_t
+
+    def is_stale(self):
+        """Reads are failing and the last good one is older than state_timeout (a slow but
+        working link is not stale: only failed reads count)."""
+        return self._read_fails > 0 and self.state_age() > self.state_timeout
+
+    def _check_stale(self, traj):
+        """Joint angles unreadable for state_timeout: the arm may be moving while the
+        published state is frozen -> stop it and abort the trajectory."""
+        if not self.is_stale():
             return
+        age = self.state_age()
+        if traj is not None and not traj.done.is_set():
+            traj.finish(FJT.PATH_TOLERANCE_VIOLATED,
+                        f'joint angles not readable for {age:.1f} s '
+                        f'({self._read_fails} failed reads): arm stopped')
+            try:
+                self.robot.stop()
+            except Exception as e:  # noqa: BLE001
+                self.get_logger().error(f'stop after stale state failed: {e!r}')
+        if not self._stale_logged:
+            self._stale_logged = True
+            self.get_logger().error(
+                f'get_angles failing ({self._read_fails} reads, {age:.1f} s): joint_states '
+                'not published, trajectories rejected until it recovers')
+
+    def _publish_state(self):
+        if self._q is None or self.is_stale():
+            return                    # never publish a frozen state
         js = JointState()
         js.header.stamp = self.get_clock().now().to_msg()
         js.name = list(ARM_JOINTS)
@@ -432,6 +538,9 @@ class MyCobotDriver(Node):
         return GoalResponse.ACCEPT
 
     def _build_job(self, traj):
+        if self.is_stale():
+            return None, (f'joint state is stale ({self.state_age():.1f} s, get_angles failing): '
+                          'refusing to move')
         q_now = self._q.copy()
         idx = [traj.joint_names.index(n) if n in traj.joint_names else None for n in ARM_JOINTS]
         times, pos = [], []
@@ -554,6 +663,12 @@ class MyCobotDriver(Node):
         self._running = False
         if hasattr(self, '_thread'):
             self._thread.join(timeout=2.0)
+        moving = self._traj is not None and not self._traj.done.is_set()
+        if moving and self.connection != 'fake':
+            try:                      # do not leave the arm running towards the last setpoint
+                self.robot.stop()
+            except Exception:  # noqa: BLE001
+                pass
         self.robot.close()
         super().destroy_node()
 

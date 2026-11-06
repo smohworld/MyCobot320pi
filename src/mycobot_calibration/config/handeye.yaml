@@ -24,12 +24,18 @@ handeye_calibrator:
     enough_feasible: 45           # collect this many reachable viewpoints, then pick the
     max_candidates: 200           # n_poses most different ones (stop after this many tried)
     ik_timeout: 0.1               # per /compute_ik call [s]
+    # IK solutions must stay within this of the START pose, per joint J1..J6 [deg]
+    # (<= 0: no limit). Start with the camera looking down at the board.
+    max_joint_dev_deg: [60.0, 90.0, 70.0, 90.0, 90.0, 90.0]   # J3 70: no elbow flip
 
     # MoveIt
     add_table: true               # box under the robot in the planning scene
-    # Desk 110 x 60 cm; robot base on a 6 mm pedestal, 2 cm from the desk edge.
-    # Base mesh bottom is z=0, so the desk top is at z = -0.006.
-    table_z: -0.006
+    # Desk 110 x 60 cm; robot base on a 7 mm pedestal, 2 cm from the desk edge.
+    # Base mesh bottom is z=0, so the desk top is at z = -0.007 (7 mm pedestal, measured).
+    table_z: -0.007
+    # collision box top = table_z + table_margin: MoveIt keeps the gripper this far above the
+    # real desk (arm accuracy ~3-6 mm). verify_touch's touch_hover must stay above it.
+    table_margin: 0.012
     # Default: 1.5 x 1.5 m box centred on the robot. Also covers the area past the desk
     # edge (conservative: the arm stays above desk height there too). For the exact desk,
     # e.g. desk extending in +x with the robot 2 cm from its edge, centred left/right:
@@ -42,6 +48,13 @@ handeye_calibrator:
 
     # capture / solve
     settle_time: 1.0              # wait after the motion before grabbing the image [s]
+    pose_tolerance_deg: 6.0       # joint_states vs planned pose before capturing (> driver goal_tolerance_deg)
+    joint_state_timeout: 1.5      # older joint_states = missing: no sample from a frozen state [s]
     min_corners: 12
     max_pnp_rms_px: 1.0
     return_to_start: true
+
+    # verify_views pass criteria: corner spread of the same board seen from new viewpoints.
+    # The arm repeats to ~3-6 mm (servo error ~1-3 deg), so max < 3 mm fails on arm error.
+    verify_max_corner_mm: 6.0
+    verify_max_rms_mm: 3.0

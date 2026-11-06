@@ -90,7 +90,7 @@ def generate_launch_description():
         'height': '480',
         'image_topic': '/camera/image_raw',
         'camera_info_topic': '/camera/camera_info',
-        'board_xyz': '0.22,0.0,-0.006',  # board centre guess in base [m] (desk top = -6 mm)
+        'board_xyz': '0.22,0.0,-0.007',  # board centre guess in base [m] (desk top = -7 mm)
         'board_yaw': '0.0',
         'n_poses': '20',
         'poses_file': '',                # replay a previous run's planned_poses.yaml

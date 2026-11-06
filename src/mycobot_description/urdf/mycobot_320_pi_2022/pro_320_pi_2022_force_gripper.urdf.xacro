@@ -10,6 +10,8 @@
   <xacro:property name="cam" value="${calib['link6_to_camera_optical']}"/>
   <xacro:property name="tcp" value="${calib['link6_to_gripper_tcp']}"/>
   <xacro:property name="flange_yaw" value="${calib['camera_flange_yaw']}"/>
+  <!-- J2 axis height above the base mesh bottom (CAD 0.1739; measured on the real arm) -->
+  <xacro:property name="j2_height" value="${calib.get('base_to_j2_height', 0.1739)}"/>
 
   <link name="base">
     <visual>
@@ -283,7 +285,7 @@
     <limit effort = "1000.0" lower = "-2.93" upper = "2.93" velocity = "1.0"/>
     <parent link="base"/>
     <child link="link1"/>
-    <origin xyz= "0 0 0.1739" rpy = "0 0 0"/> 
+    <origin xyz= "0 0 ${j2_height}" rpy = "0 0 0"/> 
   </joint>
 
 
