@@ -49,6 +49,14 @@ class RobotBackend:
         """0 moving, 1 stopped (no object), 2 object grasped, 3 object dropped; None unknown."""
         return None
 
+    def set_gripper_torque(self, value):
+        """Grip force setting of the force-control gripper (100..300), True if it was set."""
+        return False
+
+    def get_gripper_torque(self):
+        """Grip force setting (100..300), or None."""
+        return None
+
     def power_on(self):
         pass
 
@@ -244,6 +252,18 @@ class PyMyCobotRobot(RobotBackend):
             self.mc.set_pro_gripper_speed(speed, self.gripper_id)
             self._gripper_speed = speed
         self.mc.set_pro_gripper_angle(int(max(0, min(100, round(value)))), self.gripper_id)
+
+    def set_gripper_torque(self, value):
+        if not self.use_gripper:
+            return False
+        return self.mc.set_pro_gripper_torque(int(value), self.gripper_id) == 1
+
+    def get_gripper_torque(self):
+        if not self.use_gripper:
+            return None
+        self._drain()
+        v = self.mc.get_pro_gripper_torque(self.gripper_id)
+        return v if isinstance(v, int) and 0 < v < 1000 else None
 
     def get_gripper_status(self):
         if not self.use_gripper:

@@ -15,7 +15,9 @@ Threading: one hardware thread owns the robot connection. It streams trajectory 
 /joint_states. Action and service callbacks only hand jobs to that thread and wait, so the
 connection is never used from two threads at once.
 """
+import csv
 import math
+import os
 import threading
 import time
 
@@ -69,6 +71,7 @@ class TrajJob:
         self.ref_q = None             # joints when they last moved (settle detection)
         self.ref_t = 0.0
         self.err0 = None              # error before the first correction [deg]
+        self.err0_vec = None          # same, per joint (target - actual) [deg]
         self.bias = np.zeros(6)       # feedforward added to every command [deg]
 
     @property
@@ -167,13 +170,34 @@ class MyCobotDriver(Node):
         # usually ends within settle_tolerance without a correction. All zero = off.
         self.ff_bias = np.array(p('ff_bias_deg', [0.0] * 6).value, dtype=float)
         self.ff_dir = np.array(p('ff_dir_deg', [0.0] * 6).value, dtype=float)
+        # pose dependent part: bias += G @ final_angles_deg (G row = joint that gets the bias,
+        # column = joint whose final angle it depends on), 36 values row-major. All zero = off.
+        self.ff_gain = np.array(p('ff_final_gain', [0.0] * 36).value, dtype=float)
+        if self.ff_gain.shape != (36,):
+            raise ValueError('ff_final_gain must be 36 values (6x6, row-major)')
+        self.ff_gain = self.ff_gain.reshape(6, 6)
+        # gravity-like part: bias += G @ [sin(q2), sin(q2+q3), sin(q2+q3+q4)] of the final
+        # angles, G 6x3 row-major (row = joint that gets the bias). All zero = off.
+        self.ff_sin = np.array(p('ff_sin_gain', [0.0] * 18).value, dtype=float)
+        if self.ff_sin.shape != (18,):
+            raise ValueError('ff_sin_gain must be 18 values (6x3, row-major)')
+        self.ff_sin = self.ff_sin.reshape(6, 3)
         self.ff_min_move = p('ff_min_move_deg', 1.0).value         # smaller moves: no dir term
+        # CSV of every trajectory (start, target, move, bias, first-settle error, final error)
+        # to re-fit the feedforward. '' = off.
+        self.ff_log = os.path.expanduser(p('ff_log_csv', '').value)
         if self.ff_bias.shape != (6,) or self.ff_dir.shape != (6,):
             raise ValueError('ff_bias_deg and ff_dir_deg must be 6 values')
         self.gripper_joint = p('gripper_joint', 'gripper_controller').value
         self.gripper_open_pos = p('gripper_open_position', 1.0).value    # joint value = 100
         self.gripper_closed_pos = p('gripper_closed_position', 0.0).value  # joint value = 0
         self.gripper_speed = p('gripper_speed', 50).value
+        # grip force of the force-control gripper (pymycobot set_pro_gripper_torque, 100..300).
+        # 0 = do not touch it (the gripper keeps its stored value, it is only logged).
+        self.gripper_torque = p('gripper_torque', 0).value
+        if self.gripper_torque and not 100 <= self.gripper_torque <= 300:
+            raise ValueError(f'gripper_torque must be 0 (off) or 100..300, got '
+                             f'{self.gripper_torque}')
         self.gripper_tol = p('gripper_tolerance', 5).value       # 0..100 units
         self.gripper_timeout = p('gripper_timeout', 5.0).value
         self.reconnect_after = p('reconnect_after_failures', 20).value
@@ -273,6 +297,21 @@ class MyCobotDriver(Node):
             if self._g is None:
                 self.get_logger().warn('could not read gripper angle (use_gripper:=false if '
                                        'no force-control gripper is attached)')
+            self._init_gripper_torque()
+
+    def _init_gripper_torque(self):
+        """Set --gripper_torque (if given) and log the value the gripper really has."""
+        log = self.get_logger()
+        if self.gripper_torque:
+            ok = self.robot.set_gripper_torque(self.gripper_torque)
+            if not ok:
+                log.warn(f'setting gripper torque {self.gripper_torque} failed')
+        t = self.robot.get_gripper_torque()
+        if t is None:
+            log.info('gripper torque: not readable (fake backend or no answer)')
+        else:
+            what = 'set' if self.gripper_torque else 'stored in the gripper, not changed'
+            log.info(f'gripper torque {t} ({what}; range 100..300)')
 
     def _warn_if_outside_limits(self):
         for j, (q, lo, hi) in enumerate(zip(self._q, self.j_min, self.j_max)):
@@ -432,6 +471,8 @@ class MyCobotDriver(Node):
         err = final - q
         emax = float(np.max(np.abs(err)))
         if emax <= self.settle_tol:
+            if job.err0_vec is None:
+                job.err0_vec = err.copy()
             self._finish_goal(job, emax)
             return
         # settled = the joints have not moved for settle_time since the last command
@@ -445,6 +486,11 @@ class MyCobotDriver(Node):
             if job.corrections < self.max_corrections:
                 if job.err0 is None:
                     job.err0 = emax
+                    job.err0_vec = err.copy()
+                    self.get_logger().info(
+                        'first settle error (target - actual, deg) J1..J6 = '
+                        + ' '.join(f'{e:+.1f}' for e in err)
+                        + ' | move = ' + ' '.join(f'{m:+.1f}' for m in (final - job.positions[0])))
                 corr = np.where(np.abs(err) > self.corr_deadband, err, 0.0)
                 job.cmd = self._clip_cmd(job.cmd + corr, final)
                 self._send_angles(job.cmd, self.corr_speed)
@@ -460,7 +506,27 @@ class MyCobotDriver(Node):
         cmd = np.clip(cmd, ref - self.max_corr, ref + self.max_corr)
         return np.clip(cmd, np.minimum(self.j_min, ref), np.maximum(self.j_max, ref))
 
+    def _log_ff(self, job):
+        if not self.ff_log or job.err0_vec is None or self._q is None:
+            return
+        final = job.positions[-1]
+        try:
+            new = not os.path.exists(self.ff_log)
+            with open(self.ff_log, 'a', newline='') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(['time'] + [f'{k}{j}' for k in ('start', 'final', 'bias',
+                                'err0', 'errend') for j in range(1, 7)]
+                               + ['corrections', 'duration_s'])
+                w.writerow([f'{time.time():.2f}']
+                           + [f'{v:.3f}' for v in np.concatenate(
+                               [job.positions[0], final, job.bias, job.err0_vec, final - self._q])]
+                           + [job.corrections, f'{job.duration:.2f}'])
+        except OSError as e:
+            self.get_logger().warn(f'ff_log_csv write failed: {e}')
+
     def _finish_goal(self, job, emax, timeout=False):
+        self._log_ff(job)
         how = (f'{emax:.1f} deg after {job.corrections} correction(s) (was {job.err0:.1f})'
                if job.corrections else f'{emax:.1f} deg')
         if emax <= self.goal_tol:
@@ -604,8 +670,13 @@ class MyCobotDriver(Node):
             pos = np.vstack([q_now, pos])
         job = TrajJob(times * scale, pos)
         move = pos[-1] - pos[0]
-        job.bias = self.ff_bias + self.ff_dir * np.where(np.abs(move) >= self.ff_min_move,
-                                                         np.sign(move), 0.0)
+        c2 = math.radians(pos[-1][1])
+        c3 = c2 + math.radians(pos[-1][2])
+        c4 = c3 + math.radians(pos[-1][3])
+        job.bias = (self.ff_bias + self.ff_gain @ pos[-1]
+                    + self.ff_sin @ np.array([math.sin(c2), math.sin(c3), math.sin(c4)])
+                    + self.ff_dir * np.where(np.abs(move) >= self.ff_min_move,
+                                             np.sign(move), 0.0))
         return job, ''
 
     def _exec_traj(self, goal_handle):

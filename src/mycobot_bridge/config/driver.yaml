@@ -51,8 +51,16 @@ mycobot_driver:
     # Fit on 12 pick/place moves 2026-11-06 (error at the first settle, target - actual):
     # J2-J4 sag by gravity in either direction, J1/J5/J6 stop short in the direction of motion.
     # Leave-one-out residual max 0.4-0.6 deg. All zeros = off. Re-fit if the gripper load changes.
-    ff_bias_deg: [0.0, 2.1, 1.1, 0.6, 0.0, 0.0]
-    ff_dir_deg: [0.5, 0.7, 0.2, 0.2, 0.35, 0.4]
+    # 2026-11-10 fit of J2-J4 on 31 moves (J3 -190..+106 deg, both directions, gripper torque 200):
+    #   bias_j = ff_bias_j + ff_dir_j*sign(own move) + ff_sin_gain[j] . [sin(q2), sin(q2+q3), sin(q2+q3+q4)]
+    # (q = final angles). The needed bias flips sign with the final pose, so a constant cannot
+    # work; the sin form (gravity torque) beat a linear one: residual J2 0.5, J3 0.2, J4 0.3 deg,
+    # leave-one-out 0.7/0.3/0.35. J1/J5/J6 had no error (0.1-0.3 deg): old direction terms kept.
+    ff_bias_deg: [0.000, -0.009, 0.044, -0.058, 0.000, 0.000]
+    ff_dir_deg: [0.500, 0.484, 0.502, 0.098, 0.350, 0.400]
+    ff_final_gain: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    ff_sin_gain: [0.000, 0.000, 0.000, -0.951, -0.529, -0.900, -0.001, -1.562, -0.091, 0.210, -0.413, -0.362, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]    # 6x3 row-major, rows J1..J6
+    ff_log_csv: ~/final_project_ws/ff_log.csv   # one row per trajectory, for re-fitting ff ('' = off)
     ff_min_move_deg: 1.0        # joints moving less than this get no direction term
 
     # myGripper F100 force-control (pro) gripper, pymycobot set/get_pro_gripper_angle
@@ -62,6 +70,7 @@ mycobot_driver:
     gripper_open_position: 1.0    # URDF joint value for gripper angle 100 (SRDF "open")
     gripper_closed_position: 0.0  # URDF joint value for gripper angle 0   (SRDF "close")
     gripper_speed: 50
+    gripper_torque: 0             # grip force 100..300 (pymycobot); 0 = leave the gripper's stored value
     gripper_tolerance: 5
     gripper_timeout: 5.0
 
