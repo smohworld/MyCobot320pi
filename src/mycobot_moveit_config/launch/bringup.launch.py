@@ -40,7 +40,8 @@ def setup(context):
            .robot_description(file_path=xacro_file, mappings=mappings)
            .trajectory_execution(file_path='config/moveit_controllers.yaml')
            .joint_limits(file_path='config/joint_limits.yaml')
-           .planning_pipelines(pipelines=['ompl'])
+           .planning_pipelines(pipelines=['ompl', 'pilz_industrial_motion_planner'])
+           .pilz_cartesian_limits()
            .to_moveit_configs())
 
     actions = [IncludeLaunchDescription(
