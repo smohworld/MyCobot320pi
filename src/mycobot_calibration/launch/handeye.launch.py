@@ -45,6 +45,7 @@ def setup(context):
             'connection': 'fake' if sim else lc('connection'),
             'ip': lc('ip'),
             'serial_port': lc('serial_port'),
+            'gripper_torque': lc('gripper_torque'),
             'calibration_file': lc('calibration_file'),
             'rviz': lc('rviz'),
             'rviz_config': os.path.join(share, 'config', 'handeye.rviz'),
@@ -87,6 +88,7 @@ def generate_launch_description():
         'connection': 'socket',          # socket | serial (ignored with sim:=true)
         'ip': '192.168.0.10',
         'serial_port': '/dev/ttyUSB0',
+        'gripper_torque': '-1',          # grip force 0..100, -1 = keep the gripper's stored value
         'calibration_file': '',          # '' = mycobot_description/config/hand_eye.yaml
         'board_file': '',                # '' = installed copy of calibration/charuco_board.yaml
         'camera_calibration_file': '',   # '' = installed config/camera.yaml, none = camera_info

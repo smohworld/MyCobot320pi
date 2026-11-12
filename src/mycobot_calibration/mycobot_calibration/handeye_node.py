@@ -18,6 +18,7 @@ Output (output_dir/<date_time>/): images/, samples.yaml, result.yaml, planned_po
 and hand_eye.yaml -> ros2 launch mycobot_moveit_config bringup.launch.py calibration_file:=...
 RViz: ~/markers (board, planned cameras), ~/debug_image, TF link6 -> camera_optical_frame_calib
 """
+import csv
 import datetime
 import os
 import threading
@@ -441,20 +442,69 @@ class HandEyeCalibrator(VerifyMixin, Node):
         return True
 
     # ------------------------------------------------------------ capture
+    def _log_capture(self, idx, ok, why, det, img, q, jit):
+        """One row per capture attempt (also rejected ones) in <run_dir>/capture_log.csv:
+        what the arm really did (planned vs read joints, shake while waiting) and how good the
+        detection was, so a bad sample can be explained afterwards."""
+        try:
+            self._ensure_run_dir()
+            f = os.path.join(self.run_dir, 'capture_log.csv')
+            new = not os.path.exists(f)
+            qp = (np.asarray(self.plan[idx][1], float)
+                  if idx is not None and idx < len(self.plan) else None)
+            qr = q if q is not None else np.full(6, np.nan)
+            sharp = bright = float('nan')
+            if img is not None:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+                sharp = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                bright = float(gray.mean())
+            with open(f, 'a', newline='') as fh:
+                w = csv.writer(fh)
+                if new:
+                    w.writerow(['time', 'pose_idx', 'ok', 'reason', 'n_corners', 'pnp_rms_px',
+                                'sharpness', 'brightness', 'js_age_s']
+                               + [f'{k}{j}' for k in ('q_read_deg', 'q_err_deg', 'js_std_deg',
+                                                      'js_p2p_deg') for j in range(1, 7)])
+                err = np.degrees(qp - qr) if qp is not None else np.full(6, np.nan)
+                w.writerow([f'{time.time():.2f}', '' if idx is None else idx, int(ok), why,
+                            det['n'] if det else '', f"{det['rms']:.3f}" if det else '',
+                            f'{sharp:.1f}', f'{bright:.1f}', f'{self.js_age():.3f}']
+                           + [f'{v:.3f}' for v in np.concatenate(
+                               [np.degrees(qr), err, jit[0], jit[1]])])
+        except Exception as e:  # noqa: BLE001 - logging must never break a capture
+            self.get_logger().warn(f'capture_log write failed: {e!r}')
+
+    def _watch_joints(self, dur=0.5):
+        """Joint readings over `dur` s: std and peak-to-peak [deg] (shake after arrival)."""
+        qs, t0 = [], time.monotonic()
+        while time.monotonic() - t0 < dur:
+            q = self.current_q()
+            if q is not None:
+                qs.append(q)
+            time.sleep(0.05)
+        if len(qs) < 3:
+            return np.full(6, np.nan), np.full(6, np.nan)
+        qs = np.degrees(np.array(qs))
+        return qs.std(axis=0), np.ptp(qs, axis=0)
+
     def capture_here(self, idx=None):
         time.sleep(float(self.g('settle_time')))
+        jit = self._watch_joints()
         img = self.fresh_image(self.now())
         T_bl6 = self.lookup(self.base, self.flange)
         q = self.current_q()
         if img is None or T_bl6 is None or q is None:
             self.status('no fresh image / TF' if q is not None else
                         f'joint_states stale ({self.js_age():.1f} s): sample rejected', 'error')
+            self._log_capture(idx, False, 'no image/TF' if q is not None else 'js stale',
+                              None, img, q, jit)
             return False
         det = self.target.detect(img, self.K, self.D, self.g('min_corners'))
         self._publish_debug(img, det)
         if not det['ok'] or det['rms'] > self.g('max_pnp_rms_px'):
             why = f"{det['n']} corners" if not det['ok'] else f"PnP rms {det['rms']:.2f}px"
             self.status(f'sample rejected ({why})', 'warn')
+            self._log_capture(idx, False, why, det, img, q, jit)
             return False
         k = len(self.samples)
         self.samples.append({
@@ -464,6 +514,7 @@ class HandEyeCalibrator(VerifyMixin, Node):
             'pnp_rms': det['rms']})
         self._ensure_run_dir()
         cv2.imwrite(os.path.join(self.run_dir, 'images', f'{k:02d}.png'), img)
+        self._log_capture(idx, True, f'sample {k}', det, img, q, jit)
         self.status(f"sample {k + 1}: {det['n']}/{self.target.n_corners} corners, "
                     f"PnP rms {det['rms']:.2f}px")
         return True
@@ -561,10 +612,35 @@ class HandEyeCalibrator(VerifyMixin, Node):
             base = {}
         base['link6_to_camera_optical'] = dict(zip(
             ['x', 'y', 'z', 'roll', 'pitch', 'yaw'], [round(float(x), 6) for x in v]))
+        # The TCP is not calibrated here: keep the one of the URDF that is running (TF), not the
+        # nominal 0.165 of base_calibration_file.
+        T_tcp = self.lookup(self.flange, 'gripper_tcp')
+        if T_tcp is not None:
+            base['link6_to_gripper_tcp'] = dict(zip(
+                ['x', 'y', 'z', 'roll', 'pitch', 'yaw'],
+                [round(float(x), 6) for x in T_to_xyzrpy(T_tcp)]))
         with open(os.path.join(d, 'hand_eye.yaml'), 'w') as f:
             f.write(f"# hand-eye calibration {os.path.basename(d)}: {r['method']}, "
                     f"{r['n_samples']} samples, board scatter {r['board_trans_rms_mm']:.2f} mm\n")
             yaml.safe_dump(base, f, sort_keys=False)
+        try:      # per-sample diagnostics: which poses carry the error, and why
+            with open(os.path.join(d, 'per_sample.csv'), 'w', newline='') as f:
+                w = csv.writer(f)
+                w.writerow(['sample', 'pose_idx', 'board_err_mm', 'reproj_px', 'pnp_rms_px',
+                            'n_corners', 'board_tilt_deg', 'cam_dist_m']
+                           + [f'q{j}_deg' for j in range(1, 7)])
+                for i, smp in enumerate(self.samples):
+                    Tcb = smp['T_cam_board']
+                    tilt = np.degrees(np.arccos(np.clip(abs(Tcb[2, 2]), 0, 1)))
+                    q = np.degrees(smp['q']) if smp['q'] is not None else np.full(6, np.nan)
+                    w.writerow([i, smp.get('pose_index', ''),
+                                f"{r['board_trans_per_sample_mm'][i]:.3f}",
+                                f"{r['chain_reproj_per_sample_px'][i]:.3f}",
+                                f"{smp['pnp_rms']:.3f}", len(smp['ids']), f'{tilt:.1f}',
+                                f'{np.linalg.norm(Tcb[:3, 3]):.3f}']
+                               + [f'{v:.2f}' for v in q])
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().warn(f'per_sample.csv failed: {e!r}')
         if self.plan:
             with open(os.path.join(d, 'planned_poses.yaml'), 'w') as f:
                 yaml.safe_dump({'joint_names': ARM_JOINTS, 'joint_positions': [

@@ -1,19 +1,17 @@
-# hand-eye calibration 20261106_142153: DANIILIDIS, 20 samples, board scatter 3.30 mm
-# source: ~/handeye_calib/20261106_142153 (samples, images, result.yaml there)
-# J2 height 0.181 / joint offsets J2 -0.5, J5 +1.0 deg in effect; board z -4.9 mm (desk -7 mm)
+# hand-eye calibration 20261112_100125: REFINED, 23 samples, board scatter 2.24 mm
 link6_to_camera_optical:
-  x: -0.000294
-  y: 0.075884
-  z: 0.014327
-  roll: 0.018661
-  pitch: -0.010507
-  yaw: 0.026166
+  x: 0.005133
+  y: 0.072976
+  z: 0.018483
+  roll: -0.001037
+  pitch: -0.022425
+  yaw: 0.007353
 link6_to_gripper_tcp:
   x: 0.0
   y: 0.0
-  z: 0.165
+  z: 0.175
   roll: 0.0
-  pitch: 0.0
+  pitch: -0.0
   yaw: 0.0
 camera_flange_yaw: 1.5708
 base_to_j2_height: 0.181

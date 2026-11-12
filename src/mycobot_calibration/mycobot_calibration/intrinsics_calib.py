@@ -38,17 +38,38 @@ def detect(target, gray):
     return obj, img.reshape(-1, 2).astype(np.float32), corners, ids
 
 
+F_GUESS = 470.0          # this 640x480 camera: ~470 px. Only a start value / aspect reference.
+MIN_TILT_DEG = 12.0      # a view counts as "tilted" above this angle between board normal and ray
+MIN_TILTED_VIEWS = 8
+
+
+def tilt_deg(obj, img, size):
+    """Angle (deg) between the board normal and the camera axis, via PnP with a rough K."""
+    K0 = np.array([[F_GUESS, 0, size[0] / 2], [0, F_GUESS, size[1] / 2], [0, 0, 1]])
+    ok, rvec, _ = cv2.solvePnP(obj.astype(np.float64), img.astype(np.float64), K0, None,
+                               flags=cv2.SOLVEPNP_IPPE)
+    if not ok:
+        return 0.0
+    nz = abs(cv2.Rodrigues(rvec)[0][2, 2])
+    return float(np.degrees(np.arccos(np.clip(nz, 0, 1))))
+
+
 def calibrate(views, size, fix_k3=True):
-    """views: list of (obj, img). Drops views whose error is > 3x the median, once."""
-    flags = cv2.CALIB_FIX_K3 if fix_k3 else 0
+    """views: list of (obj, img). Drops views whose error is > 3x the median, once.
+    Pixels are square, so fx/fy is held at the guess ratio (1.0); a start value keeps the
+    solver from wandering when the views are only weakly informative."""
+    flags = cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_ASPECT_RATIO
+    if fix_k3:
+        flags |= cv2.CALIB_FIX_K3
+    K0 = np.array([[F_GUESS, 0, size[0] / 2], [0, F_GUESS, size[1] / 2], [0, 0, 1]])
     objs, imgs = [v[0] for v in views], [v[1] for v in views]
-    rms, K, D, rv, tv = cv2.calibrateCamera(objs, imgs, size, None, None, flags=flags)
+    rms, K, D, rv, tv = cv2.calibrateCamera(objs, imgs, size, K0.copy(), None, flags=flags)
     per = per_view_errors(objs, imgs, K, D, rv, tv)
     keep = [i for i, e in enumerate(per) if e <= 3 * np.median(per)]
     dropped = [i for i in range(len(views)) if i not in keep]
     if dropped and len(keep) >= 10:
         objs, imgs = [objs[i] for i in keep], [imgs[i] for i in keep]
-        rms, K, D, rv, tv = cv2.calibrateCamera(objs, imgs, size, None, None, flags=flags)
+        rms, K, D, rv, tv = cv2.calibrateCamera(objs, imgs, size, K0.copy(), None, flags=flags)
         per = per_view_errors(objs, imgs, K, D, rv, tv)
     else:
         dropped = []
@@ -74,13 +95,17 @@ def coverage(views, size, grid=(8, 6)):
     return float(hit.mean())
 
 
-def report_and_save(out, views, size, names):
+def report_and_save(out, views, size, names, force=False):
     if len(views) < 10:
         print(f'need at least 10 views (have {len(views)}), 20-40 recommended')
         return False
     rms, K, D, per, dropped = calibrate(views, size)
     cov = coverage(views, size)
+    tilts = np.array([tilt_deg(o, i, size) for o, i in views])
+    n_tilt = int(np.sum(tilts >= MIN_TILT_DEG))
     lines = [
+        f'board tilt: median {np.median(tilts):.0f} deg, max {tilts.max():.0f} deg, '
+        f'{n_tilt} views >= {MIN_TILT_DEG:.0f} deg (need {MIN_TILTED_VIEWS})',
         f'views used: {len(views) - len(dropped)} / {len(views)}'
         + (f'  (dropped as outliers: {[names[i] for i in dropped]})' if dropped else ''),
         f'image size: {size[0]} x {size[1]}',
@@ -91,14 +116,23 @@ def report_and_save(out, views, size, names):
         f'dist (k1 k2 p1 p2 k3): {np.round(D.ravel(), 5).tolist()}',
     ]
     warn = []
+    bad = []
+    if n_tilt < MIN_TILTED_VIEWS:
+        bad.append(f'only {n_tilt} tilted views: focal length is NOT determined by flat views '
+                   f'(fx/fy blow up). Tilt the board 20-40 deg (both directions), vary distance')
+    if not (0.5 * size[0] < K[0, 0] < 1.6 * size[0]):
+        bad.append(f'fx {K[0, 0]:.0f} is implausible for a {size[0]} px wide image')
     if rms > 1.0:
         warn.append('rms > 1 px: blurred / moving captures or wrong board size in the yaml')
     if cov < 0.8:
         warn.append('board did not reach the image corners/edges: distortion is poorly constrained')
     if abs(K[0, 2] - size[0] / 2) > 0.1 * size[0] or abs(K[1, 2] - size[1] / 2) > 0.1 * size[1]:
         warn.append('principal point far from the image centre: add tilted views')
-    for ln in lines + ['WARNING: ' + w for w in warn]:
+    for ln in lines + ['WARNING: ' + w for w in warn] + ['REJECTED: ' + b for b in bad]:
         print(ln)
+    if bad and not force:
+        print('NOT saved (add more tilted views, or force with --force)')
+        return False
     path = os.path.join(out, 'camera.yaml')
     save_intrinsics(path, K, D, size, rms)
     with open(os.path.join(out, 'report.txt'), 'w') as f:
@@ -124,7 +158,7 @@ def from_images(args, target):
         views.append((d[0], d[1]))
         names.append(os.path.basename(fn))
     print(f'{len(views)} / {len(files)} images with the board')
-    return report_and_save(args.out, views, size, names) if size else False
+    return report_and_save(args.out, views, size, names, args.force) if size else False
 
 
 def live(args, target):
@@ -140,6 +174,7 @@ def live(args, target):
     views, names, size = [], [], None
     auto, last_auto, last_corners = False, 0.0, None
     prev_img = None
+    tilts = []
     print(__doc__.split('\n\n')[1])
     while True:
         ok, frame = cap.read()
@@ -160,6 +195,8 @@ def live(args, target):
         if d is not None:
             cv2.aruco.drawDetectedCornersCharuco(vis, d[2], d[3], (0, 255, 0))
         n = 0 if d is None else len(d[0])
+        tilt = tilt_deg(d[0], d[1], size) if d is not None else 0.0
+        n_tilted = sum(1 for t in tilts if t >= MIN_TILT_DEG)
 
         # auto-capture: first failing condition is shown on screen
         wait = 1.0 - (time.monotonic() - last_auto)
@@ -174,6 +211,8 @@ def live(args, target):
             reason = f'hold still (motion {diff:.1f} >= {args.still_threshold:.1f})'
         elif wait > 0:
             reason = f'cooldown {wait:.1f}s'
+        elif tilt < MIN_TILT_DEG and len(tilts) - n_tilted >= 4:
+            reason = f'tilt the board! (tilt {tilt:.0f} < {MIN_TILT_DEG:.0f} deg)'
         elif shift is not None and shift <= args.min_move_px:
             reason = f'move to a new spot (moved {shift:.0f} <= {args.min_move_px:.0f}px)'
         else:
@@ -181,7 +220,8 @@ def live(args, target):
         auto_ok = auto and reason is None
 
         txt = (f'views {len(views)}  corners {n}/{target.n_corners}  '
-               f'coverage {coverage(views, size) * 100:.0f}%  auto {"ON" if auto else "off"}')
+               f'cov {coverage(views, size) * 100:.0f}%  tilt {tilt:.0f}deg  '
+               f'tilted {n_tilted}/{MIN_TILTED_VIEWS}  auto {"ON" if auto else "off"}')
         cv2.putText(vis, txt, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         if auto:
             st, col = ('AUTO: capturing', (0, 255, 0)) if reason is None else \
@@ -202,6 +242,7 @@ def live(args, target):
                 name = f'{len(views):03d}.png'
                 cv2.imwrite(os.path.join(img_dir, name), frame)
                 views.append((d[0], d[1]))
+                tilts.append(tilt)
                 names.append(name)
                 last_corners, last_auto = d[1].copy(), time.monotonic()
                 print(f'captured {name}: {n} corners')
@@ -209,11 +250,12 @@ def live(args, target):
             auto = not auto
         elif key == ord('u') and views:
             views.pop()
+            tilts.pop()
             os.remove(os.path.join(img_dir, names.pop()))
             last_corners = views[-1][1] if views else None
             print(f'removed last view, {len(views)} left')
         elif key == ord('c'):
-            report_and_save(args.out, views, size, names)
+            report_and_save(args.out, views, size, names, args.force)
         elif key in (ord('q'), 27):
             break
     cap.release()
@@ -231,6 +273,7 @@ def main():
     p.add_argument('--width', type=int, default=640)
     p.add_argument('--height', type=int, default=480)
     p.add_argument('--images', default='', help='calibrate from saved images instead of live')
+    p.add_argument('--force', action='store_true', help='save even if the checks reject it')
     p.add_argument('--min-corners', type=int, default=12)
     p.add_argument('--min-sharpness', type=float, default=60.0, help='Laplacian variance')
     p.add_argument('--min-move-px', type=float, default=40.0, help='auto-capture: board moved')

@@ -13,12 +13,14 @@ link6_to_camera_optical:
   pitch: 0.0
   yaw: 0.0
 
-# Tool centre point in link6: finger TIP. Measured 2026-11-06: 165 mm from the link6
-# face (camera flange) to the finger tip (mesh estimate was 0.151).
+# Tool centre point in link6: finger TIP, 175 mm from the link6 face (camera flange) to the
+# finger tip (confirmed 2026-11-10; 2026-11-06 measured 165 mm, the mesh estimate was 0.151).
+# The hand-eye calibration does not compute it: hand_eye.yaml of a run takes it from the URDF
+# that was running.
 link6_to_gripper_tcp:
   x: 0.0
   y: 0.0
-  z: 0.165
+  z: 0.175
   roll: 0.0
   pitch: 0.0
   yaw: 0.0
