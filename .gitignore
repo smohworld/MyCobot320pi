@@ -4,3 +4,8 @@ log/
 __pycache__/
 *.pyc
 .vscode/
+# generated logs / large model files (re-downloadable or re-trainable)
+ff_log.csv
+hold_log.csv
+*.pt
+src/tray_yolo/runs/**/train_batch*
