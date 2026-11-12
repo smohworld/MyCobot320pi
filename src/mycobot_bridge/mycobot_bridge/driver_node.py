@@ -186,17 +186,23 @@ class MyCobotDriver(Node):
         # CSV of every trajectory (start, target, move, bias, first-settle error, final error)
         # to re-fit the feedforward. '' = off.
         self.ff_log = os.path.expanduser(p('ff_log_csv', '').value)
+        # After every finished trajectory, record the joint readings for hold_log_s seconds and
+        # append one summary row (mean error to the target, std, peak-to-peak per joint) to
+        # hold_log_csv: quantifies the shake after arriving. '' = off.
+        self.hold_log = os.path.expanduser(p('hold_log_csv', '').value)
+        self.hold_log_s = p('hold_log_s', 2.0).value
+        self._hold = None
         if self.ff_bias.shape != (6,) or self.ff_dir.shape != (6,):
             raise ValueError('ff_bias_deg and ff_dir_deg must be 6 values')
         self.gripper_joint = p('gripper_joint', 'gripper_controller').value
         self.gripper_open_pos = p('gripper_open_position', 1.0).value    # joint value = 100
         self.gripper_closed_pos = p('gripper_closed_position', 0.0).value  # joint value = 0
         self.gripper_speed = p('gripper_speed', 50).value
-        # grip force of the force-control gripper (pymycobot set_pro_gripper_torque, 100..300).
-        # 0 = do not touch it (the gripper keeps its stored value, it is only logged).
-        self.gripper_torque = p('gripper_torque', 0).value
-        if self.gripper_torque and not 100 <= self.gripper_torque <= 300:
-            raise ValueError(f'gripper_torque must be 0 (off) or 100..300, got '
+        # grip force of the force-control gripper (pymycobot set_pro_gripper_torque, 0..100).
+        # -1 = do not touch it (the gripper keeps its stored value, it is only logged).
+        self.gripper_torque = p('gripper_torque', -1).value
+        if self.gripper_torque != -1 and not 0 <= self.gripper_torque <= 100:
+            raise ValueError(f'gripper_torque must be -1 (keep stored value) or 0..100, got '
                              f'{self.gripper_torque}')
         self.gripper_tol = p('gripper_tolerance', 5).value       # 0..100 units
         self.gripper_timeout = p('gripper_timeout', 5.0).value
@@ -302,7 +308,7 @@ class MyCobotDriver(Node):
     def _init_gripper_torque(self):
         """Set --gripper_torque (if given) and log the value the gripper really has."""
         log = self.get_logger()
-        if self.gripper_torque:
+        if self.gripper_torque >= 0:
             ok = self.robot.set_gripper_torque(self.gripper_torque)
             if not ok:
                 log.warn(f'setting gripper torque {self.gripper_torque} failed')
@@ -310,8 +316,8 @@ class MyCobotDriver(Node):
         if t is None:
             log.info('gripper torque: not readable (fake backend or no answer)')
         else:
-            what = 'set' if self.gripper_torque else 'stored in the gripper, not changed'
-            log.info(f'gripper torque {t} ({what}; range 100..300)')
+            what = 'set' if self.gripper_torque >= 0 else 'stored in the gripper, not changed'
+            log.info(f'gripper torque {t} ({what}; range 0..100)')
 
     def _warn_if_outside_limits(self):
         for j, (q, lo, hi) in enumerate(zip(self._q, self.j_min, self.j_max)):
@@ -407,6 +413,7 @@ class MyCobotDriver(Node):
             finally:                  # exceptions count as failed reads too
                 if q is not None:
                     self._q, self._q_t = q, time.monotonic()
+                    self._hold_sample(q)
                     if self._read_fails or self._stale_logged:
                         self.get_logger().info(
                             f'get_angles recovered after {self._read_fails} failed reads')
@@ -525,8 +532,46 @@ class MyCobotDriver(Node):
         except OSError as e:
             self.get_logger().warn(f'ff_log_csv write failed: {e}')
 
+    def _hold_sample(self, q):
+        h = self._hold
+        if h is None:
+            return
+        now = time.monotonic()
+        if self._traj is not None and not self._traj.done.is_set() and now - h['t0'] > 0.05:
+            self._hold = None            # a new trajectory started: drop the record
+            return
+        h['qs'].append((now - h['t0'], np.array(q, float)))
+        if now - h['t0'] < self.hold_log_s:
+            return
+        self._hold = None
+        qs = np.array([v for _, v in h['qs']])
+        ts = np.array([t for t, _ in h['qs']])
+        if len(qs) < 5:
+            return
+        d = np.diff(qs, axis=0)
+        try:
+            new = not os.path.exists(self.hold_log)
+            with open(self.hold_log, 'a', newline='') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(['time', 'n', 'rate_hz', 'corrections']
+                               + [f'{k}{j}' for k in ('final', 'cmd', 'err_mean', 'std', 'p2p',
+                                                      'step_rms') for j in range(1, 7)])
+                w.writerow([f'{time.time():.2f}', len(qs),
+                            f'{(len(qs) - 1) / max(ts[-1] - ts[0], 1e-6):.1f}', h['corr']]
+                           + [f'{v:.3f}' for v in np.concatenate([
+                               h['final'], h['cmd'], h['final'] - qs.mean(axis=0), qs.std(axis=0),
+                               np.ptp(qs, axis=0), np.sqrt((d ** 2).mean(axis=0))])])
+        except OSError as e:
+            self.get_logger().warn(f'hold_log_csv write failed: {e}')
+
     def _finish_goal(self, job, emax, timeout=False):
         self._log_ff(job)
+        if self.hold_log and self._q is not None:
+            final = job.positions[-1]
+            self._hold = {'t0': time.monotonic(), 'final': np.array(final, float),
+                          'cmd': np.array(final if job.cmd is None else job.cmd, float),
+                          'corr': job.corrections, 'qs': []}
         how = (f'{emax:.1f} deg after {job.corrections} correction(s) (was {job.err0:.1f})'
                if job.corrections else f'{emax:.1f} deg')
         if emax <= self.goal_tol:

@@ -263,7 +263,7 @@ class PyMyCobotRobot(RobotBackend):
             return None
         self._drain()
         v = self.mc.get_pro_gripper_torque(self.gripper_id)
-        return v if isinstance(v, int) and 0 < v < 1000 else None
+        return v if isinstance(v, int) and 0 <= v <= 100 else None
 
     def get_gripper_status(self):
         if not self.use_gripper:

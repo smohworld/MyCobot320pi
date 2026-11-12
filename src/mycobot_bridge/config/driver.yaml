@@ -26,7 +26,7 @@ mycobot_driver:
     joint_signs: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
     # J2 -0.5 / J5 +1.0: estimated from the hand-eye runs 20261106_111716 and _120119
     # (same J5 +0.9/+1.0 in both; kin_check held-out reprojection 4.1 -> 2.6 px)
-    joint_offsets_deg: [0.0, -0.5, 0.0, 0.0, 1.0, 0.0]
+    joint_offsets_deg: [0.0, -0.33, 0.53, -0.79, 0.71, 0.0]
 
     # software joint limits [deg, URDF frame] (J1..J6). J6 +-90: the camera/gripper cable winds up beyond
     # that. Same window as joint6output_to_joint6 in mycobot_moveit_config/joint_limits.yaml.
@@ -39,11 +39,11 @@ mycobot_driver:
     goal_timeout: 5.0           # s after the trajectory end to reach goal_tolerance (incl. corrections)
     # settle correction: once the arm stops (servos stop 2-3 deg short), command
     # target + remaining error so it ends on the target. max_corrections: 0 = off
-    settle_tolerance_deg: 0.5   # done when every joint is within this
-    max_corrections: 3
-    correction_deadband_deg: 0.3
+    settle_tolerance_deg: 0.35  # done when every joint is within this
+    max_corrections: 2
+    correction_deadband_deg: 0.2
     max_correction_deg: 6.0     # never command more than this beyond the target
-    correction_speed: 30        # send_angles speed for the correction steps
+    correction_speed: 20        # send_angles speed for the correction steps
     settle_time: 0.4            # s without motion = settled
     settle_motion_deg: 0.2
     # feedforward: every command of a trajectory = point + ff_bias_deg + ff_dir_deg * sign(final - start)
@@ -61,6 +61,8 @@ mycobot_driver:
     ff_final_gain: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     ff_sin_gain: [0.000, 0.000, 0.000, -0.951, -0.529, -0.900, -0.001, -1.562, -0.091, 0.210, -0.413, -0.362, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]    # 6x3 row-major, rows J1..J6
     ff_log_csv: ~/final_project_ws/ff_log.csv   # one row per trajectory, for re-fitting ff ('' = off)
+    hold_log_csv: ~/final_project_ws/hold_log.csv   # per trajectory: joint shake for hold_log_s after arrival ('' = off)
+    hold_log_s: 8.0
     ff_min_move_deg: 1.0        # joints moving less than this get no direction term
 
     # myGripper F100 force-control (pro) gripper, pymycobot set/get_pro_gripper_angle
@@ -70,7 +72,7 @@ mycobot_driver:
     gripper_open_position: 1.0    # URDF joint value for gripper angle 100 (SRDF "open")
     gripper_closed_position: 0.0  # URDF joint value for gripper angle 0   (SRDF "close")
     gripper_speed: 50
-    gripper_torque: 0             # grip force 100..300 (pymycobot); 0 = leave the gripper's stored value
+    gripper_torque: -1            # grip force 0..100; -1 = leave the gripper's stored value
     gripper_tolerance: 5
     gripper_timeout: 5.0
 

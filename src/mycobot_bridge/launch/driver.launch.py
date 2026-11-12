@@ -41,6 +41,7 @@ def setup(context):
                  'serial_port': lc('serial_port'),
                  'baudrate': int(lc('baudrate')),
                  'use_gripper': lc('use_gripper').lower() in ('true', '1'),
+                 'gripper_torque': int(lc('gripper_torque')),
              }]),
     ]
     if lc('rviz').lower() in ('true', '1'):
@@ -56,6 +57,7 @@ def generate_launch_description():
         'serial_port': '/dev/ttyUSB0',
         'baudrate': '115200',
         'use_gripper': 'true',
+        'gripper_torque': '-1',        # grip force 0..100, -1 = keep the gripper's stored value
         'calibration_file': '',        # '' = mycobot_description/config/hand_eye.yaml
         'rviz': 'true',
     }
