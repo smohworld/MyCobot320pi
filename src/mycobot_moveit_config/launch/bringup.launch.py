@@ -51,6 +51,7 @@ def setup(context):
             'ip': lc('ip'),
             'serial_port': lc('serial_port'),
             'calibration_file': calib,
+            'gripper_torque': lc('gripper_torque'),
             'rviz': 'false',
         }.items())]
 
@@ -74,6 +75,7 @@ def generate_launch_description():
         'connection': 'fake',          # fake | socket | serial
         'ip': '192.168.0.10',
         'serial_port': '/dev/ttyUSB0',
+        'gripper_torque': '-1',        # 0..100, -1 = keep the gripper's stored value
         'calibration_file': '',        # '' = mycobot_description/config/hand_eye.yaml
         'rviz': 'true',
         'rviz_config': '',             # '' = config/moveit.rviz
