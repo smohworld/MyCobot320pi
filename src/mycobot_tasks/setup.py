@@ -22,6 +22,8 @@ setup(
             'click_move = mycobot_tasks.click_move:main',
             'tray_detect = mycobot_tasks.tray_detect:main',
             'tray_pick = mycobot_tasks.tray_pick:main',
+            'look_toward = mycobot_tasks.look_toward:main',
+            'tray_range = mycobot_tasks.tray_range:main',
         ],
     },
 )

@@ -306,7 +306,7 @@ def main():
     a = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     a.add_argument('--height', type=float, default=0.05,
-                   help='finger tip above the desk at the clicked point [m]')
+                   help='finger tip above the clicked surface (desk + --surface) [m]')
     a.add_argument('--table-z', type=float, default=-0.007, help='desk top z in base [m]')
     a.add_argument('--table-margin', type=float, default=0.012,
                    help='desk collision box raised by this [m]')
