@@ -58,7 +58,10 @@ def setup(context):
     actions.append(Node(
         package='moveit_ros_move_group', executable='move_group', output='screen',
         parameters=[cfg.to_dict(), {'publish_robot_description_semantic': True,
-                                    'monitor_dynamics': False}]))
+                                    'monitor_dynamics': False,
+                                    # MTC: execute task solutions (mycobot_tasks tray_pick_mtc)
+                                    'capabilities':
+                                        'move_group/ExecuteTaskSolutionCapability'}]))
 
     if lc('rviz').lower() in ('true', '1'):
         actions.append(Node(
