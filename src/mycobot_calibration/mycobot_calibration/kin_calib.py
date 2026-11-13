@@ -201,16 +201,20 @@ def current_offsets(driver_yaml):
 
 
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    pkg = os.path.dirname(here)
+    # source tree (python3 src/.../kin_calib.py) or installed package (python3 -m ...)
+    pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bridge_cfg = os.path.join(os.path.dirname(pkg), 'mycobot_bridge', 'config')
+    if not os.path.isdir(os.path.join(pkg, 'config')):
+        from ament_index_python.packages import get_package_share_directory
+        pkg = get_package_share_directory('mycobot_calibration')
+        bridge_cfg = os.path.join(get_package_share_directory('mycobot_bridge'), 'config')
     ap = argparse.ArgumentParser(description='joint-offset calibration from hand-eye runs')
     ap.add_argument('--runs', nargs='*', help='hand-eye run folders (samples.yaml + result.yaml)')
     ap.add_argument('--urdf', default='', help='URDF file (default: /robot_state_publisher)')
     ap.add_argument('--intrinsics', default=os.path.join(pkg, 'config', 'camera.yaml'))
     ap.add_argument('--board', default=os.path.join(pkg, 'config', 'charuco_board.yaml'))
     ap.add_argument('--joints', default='2,3,4,5', help='joints to fit, 1-based (default 2,3,4,5)')
-    ap.add_argument('--driver-yaml', default=os.path.join(
-        os.path.dirname(pkg), 'mycobot_bridge', 'config', 'driver.yaml'))
+    ap.add_argument('--driver-yaml', default=os.path.join(bridge_cfg, 'driver.yaml'))
     ap.add_argument('--out', default='', help='write the result as yaml')
     a, _ = ap.parse_known_args()
 

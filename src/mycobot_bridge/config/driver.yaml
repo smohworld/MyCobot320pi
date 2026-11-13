@@ -39,9 +39,9 @@ mycobot_driver:
     goal_timeout: 5.0           # s after the trajectory end to reach goal_tolerance (incl. corrections)
     # settle correction: once the arm stops (servos stop 2-3 deg short), command
     # target + remaining error so it ends on the target. max_corrections: 0 = off
-    settle_tolerance_deg: 0.35  # done when every joint is within this
-    max_corrections: 2
-    correction_deadband_deg: 0.2
+    settle_tolerance_deg: 0.25  # done when every joint is within this (0.35 until 2026-11-13)
+    max_corrections: 3          # 2 until 2026-11-13
+    correction_deadband_deg: 0.12  # 0.2 until 2026-11-13; servo step ~0.09 deg
     max_correction_deg: 6.0     # never command more than this beyond the target
     correction_speed: 20        # send_angles speed for the correction steps
     settle_time: 0.4            # s without motion = settled

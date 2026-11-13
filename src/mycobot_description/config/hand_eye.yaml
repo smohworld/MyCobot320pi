@@ -1,11 +1,11 @@
-# hand-eye calibration 20261112_100125: REFINED, 23 samples, board scatter 2.24 mm
+# hand-eye calibration 20261113_094538: TSAI, 20 samples, board scatter 2.37 mm
 link6_to_camera_optical:
-  x: 0.005133
-  y: 0.072976
-  z: 0.018483
-  roll: -0.001037
-  pitch: -0.022425
-  yaw: 0.007353
+  x: 0.000327
+  y: 0.074503
+  z: 0.017019
+  roll: 0.006772
+  pitch: -0.009872
+  yaw: -0.009449
 link6_to_gripper_tcp:
   x: 0.0
   y: 0.0
