@@ -1,9 +1,10 @@
 """Split images/labels into dataset/{train,val}, write data.yaml and train YOLO.
 
   pip install ultralytics
-  python3 train.py [--model yolov8n.pt] [--epochs 100] [--val 0.2] [--no-train]
+  python3 train.py [--model yolov8n-obb.pt] [--epochs 100] [--val 0.2] [--no-train]
 Only images that have a label file are used (empty file = background image).
-Result: runs/tray/weights/best.pt
+Labels are YOLO-OBB (label.py): class x1 y1 x2 y2 x3 y3 x4 y4.
+Result: runs/<--name, default tray>/weights/best.pt
 """
 import argparse
 import os
@@ -41,10 +42,11 @@ def prepare(val_ratio, seed=0):
 
 def main():
     a = argparse.ArgumentParser()
-    a.add_argument('--model', default='yolov8n.pt', help='or yolov8n-obb.pt (needs OBB labels)')
+    a.add_argument('--model', default='yolov8n-obb.pt', help='OBB model (yolov8s-obb.pt = bigger)')
     a.add_argument('--epochs', type=int, default=100)
     a.add_argument('--imgsz', type=int, default=640)
     a.add_argument('--val', type=float, default=0.2)
+    a.add_argument('--name', default='tray', help='run name -> runs/<name>/weights/best.pt')
     a.add_argument('--no-train', action='store_true')
     args = a.parse_args()
     yaml_path = prepare(args.val)
@@ -52,8 +54,8 @@ def main():
         return
     from ultralytics import YOLO
     YOLO(args.model).train(data=yaml_path, epochs=args.epochs, imgsz=args.imgsz,
-                           project=os.path.join(ROOT, 'runs'), name='tray', exist_ok=True,
-                           flipud=0.5, degrees=0)   # flips keep axis-aligned boxes tight; rotation would inflate them
+                           project=os.path.join(ROOT, 'runs'), name=args.name, exist_ok=True,
+                           flipud=0.5, degrees=0)   # OBB polygons follow flips; tray yaw is already varied
 
 
 if __name__ == '__main__':

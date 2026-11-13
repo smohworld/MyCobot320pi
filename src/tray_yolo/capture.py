@@ -3,6 +3,7 @@
 Run in the ROS terminal (source /opt/ros/... and the workspace), NOT in the yolo venv:
   python3 capture.py [--topic /camera/image_raw]
   python3 capture.py --dev /dev/video2        # no ROS: open the camera directly
+  python3 capture.py --prefix front           # front views (tray on the shelf) -> front_*.jpg
 SPACE / c: save frame to images/   q / ESC: quit
 Tip: vary tray position, yaw, lighting and the robot shadow; 100-200 frames.
 """
@@ -58,9 +59,12 @@ def main():
     a = argparse.ArgumentParser()
     a.add_argument('--topic', default='/camera/image_raw')
     a.add_argument('--dev', default='', help='open this camera directly instead of the topic')
+    a.add_argument('--prefix', default='img',
+                   help="file name prefix (e.g. 'front' for front views): <prefix>_<time>_<n>.jpg")
     args = a.parse_args()
     os.makedirs(IMAGES, exist_ok=True)
     n = len([f for f in os.listdir(IMAGES) if f.endswith('.jpg')])
+    k_pre = len([f for f in os.listdir(IMAGES) if f.startswith(args.prefix + '_')])
     frame = None
     for f in cam_frames(args.dev) if args.dev else ros_frames(args.topic):
         if f is not None:
@@ -69,16 +73,17 @@ def main():
             cv2.waitKey(1)
             continue
         vis = frame.copy()
-        cv2.putText(vis, f'SPACE/c save  q quit   saved: {n}', (8, 22),
+        cv2.putText(vis, f'SPACE/c save  q quit   {args.prefix}: {k_pre}  all: {n}', (8, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         cv2.imshow('capture', vis)
         k = cv2.waitKey(1) & 0xFF
         if k in (ord('q'), 27):
             break
         if k in (ord('c'), ord(' ')):
-            fn = os.path.join(IMAGES, f'img_{time.strftime("%Y%m%d_%H%M%S")}_{n:04d}.jpg')
+            fn = os.path.join(IMAGES, f'{args.prefix}_{time.strftime("%Y%m%d_%H%M%S")}_{n:04d}.jpg')
             cv2.imwrite(fn, frame)
             n += 1
+            k_pre += 1
             print('saved', fn, flush=True)
     cv2.destroyAllWindows()
 
