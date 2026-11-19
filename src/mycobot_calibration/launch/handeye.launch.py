@@ -10,6 +10,8 @@ Real robot (USB camera via OpenCV, intrinsics from config/camera.yaml by default
   take them from camera_info_topic
   ros2 launch mycobot_calibration handeye.launch.py connection:=serial serial_port:=/dev/ttyUSB0 ...
   own camera driver instead: camera:=false image_topic:=... (camera_info_topic or the file)
+Planning scene: mycobot_tasks place_scene (desk + floor) is applied at start (scene:=false
+to skip; scene_args:="--with-bot --bot 0.02,-0.40" for its options).
 then
   ros2 service call /handeye_calibrator/plan std_srvs/srv/Trigger   # preview in RViz
   ros2 service call /handeye_calibrator/run  std_srvs/srv/Trigger   # move + capture + solve
@@ -18,7 +20,10 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+import shlex
+
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction,
+                            TimerAction)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -63,6 +68,13 @@ def setup(context):
                          'height': int(lc('height')),
                          'camera_calibration_file': calib_file}]))
 
+    if on('scene'):
+        # desk / floor (+ TurtleBot / shelf via scene_args) from mycobot_tasks place_scene,
+        # once move_group is up; it also removes the 1.5 x 1.5 m 'calibration_table'
+        actions.append(TimerAction(period=3.0, actions=[Node(
+            package='mycobot_tasks', executable='place_scene', name='place_scene',
+            output='screen', arguments=['--wait', '60'] + shlex.split(lc('scene_args')))]))
+
     actions.append(Node(
         package='mycobot_calibration', executable='handeye', name='handeye_calibrator',
         output='screen',
@@ -86,14 +98,14 @@ def generate_launch_description():
         'sim': 'false',
         'auto_start': 'false',
         'connection': 'socket',          # socket | serial (ignored with sim:=true)
-        'ip': '192.168.0.10',
+        'ip': '10.42.0.188',
         'serial_port': '/dev/ttyUSB0',
         'gripper_torque': '-1',          # grip force 0..100, -1 = keep the gripper's stored value
         'calibration_file': '',          # '' = mycobot_description/config/hand_eye.yaml
         'board_file': '',                # '' = installed copy of calibration/charuco_board.yaml
         'camera_calibration_file': '',   # '' = installed config/camera.yaml, none = camera_info
         'camera': 'true',                # start the OpenCV USB camera node
-        'camera_device': '0',
+        'camera_device': '2',
         'width': '640',
         'height': '480',
         'image_topic': '/camera/image_raw',
@@ -104,6 +116,8 @@ def generate_launch_description():
         'poses_file': '',                # replay a previous run's planned_poses.yaml
         'output_dir': '~/handeye_calib',
         'rviz': 'true',
+        'scene': 'true',                 # apply mycobot_tasks place_scene (desk + floor)
+        'scene_args': '',                # place_scene options, e.g. "--with-bot --bot 0.02,-0.40"
     }
     return LaunchDescription(
         [DeclareLaunchArgument(k, default_value=v) for k, v in args.items()]

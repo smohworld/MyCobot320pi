@@ -63,6 +63,15 @@ Visualization Manager:
       Scene Robot:
         Robot Alpha: 0.5
       Value: true
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Enable Transparency: true
+      Enabled: true
+      Interactive Markers Namespace: /regions
+      Name: Regions
+      Show Axes: false
+      Show Descriptions: true
+      Show Visual Aids: false
+      Value: true
   Global Options:
     Fixed Frame: base
   Tools:

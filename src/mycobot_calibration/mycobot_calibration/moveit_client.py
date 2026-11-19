@@ -77,11 +77,15 @@ class MoveItClient:
 
     # -------------------------------------------------------------- motion
     def move_joints(self, names, q, velocity_scaling=0.3, accel_scaling=0.3,
-                    planning_time=5.0, attempts=3, timeout=120.0):
-        """Plan + execute. Returns (ok, message)."""
+                    planning_time=5.0, attempts=3, timeout=120.0, planner=''):
+        """Plan + execute. Returns (ok, message). planner: '' = the default pipeline
+        (OMPL), 'LIN' = Pilz straight TCP line, 'PTP' = Pilz joint-space straight line."""
         g = MoveGroup.Goal()
         r = g.request
         r.group_name = self.group
+        if planner:
+            r.pipeline_id, r.planner_id = 'pilz_industrial_motion_planner', planner
+            attempts = 1
         r.num_planning_attempts = int(attempts)
         r.allowed_planning_time = float(planning_time)
         r.max_velocity_scaling_factor = float(velocity_scaling)
