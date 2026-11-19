@@ -1,4 +1,5 @@
-"""Search regions: where the robot looks for the tray ('tray') and for the TurtleBot ('bot').
+"""Search regions: the shelf ('shelf', for now the desk top beside the robot: trays are
+picked from / placed on it, no marker there) and the TurtleBot ('bot').
 x / y are dragged in RViz (interactive markers); the heights are picked from the right-click
 menu or typed on the command line. Saved to ~/.ros/regions.yaml; tray_handle_pick reads that
 file each time it scans (no restart needed).
@@ -7,7 +8,7 @@ file each time it scans (no restart needed).
                                                  # InteractiveMarkers, namespace /regions
   ros2 run mycobot_tasks regions --print         # show the saved regions, no ROS
   ros2 run mycobot_tasks regions --set bot --z -0.111 --view 0.35     # numbers, no ROS
-  ros2 run mycobot_tasks regions --set tray --x 0.18,0.34 --y -0.12,0.12
+  ros2 run mycobot_tasks regions --set shelf --x -0.15,0.05 --y 0.14,0.27
 
 Per region:
   x, y   the box corners: drag sphere A / B in RViz (in the plane of the surface)
@@ -25,18 +26,19 @@ import yaml
 
 PATH = os.path.expanduser('~/.ros/regions.yaml')
 VIEW = 0.28                       # default camera height over the surface [m]
-# defaults (base frame, m): tray on the desk in front of the robot, TurtleBot past the -y
-# (drop-off) edge; z = surface (tray bottom / marker plane)
+# defaults (base frame, m): shelf = the desk top on the +y side of the robot (stand-in
+# until the real shelf is built; desk y up to +0.29, front end x +0.06), TurtleBot in front
+# of the desk below it; z = surface (tray bottom / marker plane)
 DEFAULTS = {
-    'tray': dict(x=[0.18, 0.34], y=[-0.12, 0.12], z=-0.007, view=VIEW),
-    'bot': dict(x=[-0.10, 0.20], y=[-0.60, -0.40], z=-0.111, view=VIEW),
+    'shelf': dict(x=[-0.15, 0.05], y=[0.14, 0.27], z=-0.007, view=VIEW),
+    'bot': dict(x=[-0.10, 0.20], y=[-0.60, -0.40], z=-0.280, view=VIEW),
 }
-COLOURS = {'tray': (0.1, 0.8, 0.2), 'bot': (0.2, 0.4, 1.0)}
-LABELS = {'tray': 'tray area', 'bot': 'TurtleBot area'}
+COLOURS = {'shelf': (0.1, 0.8, 0.2), 'bot': (0.2, 0.4, 1.0)}
+LABELS = {'shelf': 'shelf area', 'bot': 'TurtleBot area'}
 # surface presets (base frame z): place_scene desk top -0.007, floor -0.306 (desk 0.299),
-# TurtleBot box floor (floor + 0.195), shelf fork tops L1..L3 (floor + 0.254 / 0.419 / 0.584)
+# TurtleBot box floor (floor + 0.026, box behind the Burger), shelf fork tops L1..L3 (floor + 0.254 / 0.419 / 0.584)
 FLOOR = -0.306
-Z_PRESETS = [('desk top', -0.007), ('TurtleBot box floor', FLOOR + 0.195),
+Z_PRESETS = [('desk top', -0.007), ('TurtleBot box floor', FLOOR + 0.026),
              ('floor', FLOOR), ('shelf L1 fork', FLOOR + 0.254),
              ('shelf L2 fork', FLOOR + 0.419), ('shelf L3 fork', FLOOR + 0.584)]
 VIEW_PRESETS = [0.20, 0.24, 0.28, 0.32, 0.36, 0.40]

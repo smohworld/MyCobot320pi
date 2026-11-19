@@ -54,15 +54,19 @@ class MoveItClient:
 
     # ----------------------------------------------------------------- IK
     def compute_ik(self, T_base_link, link, seed_names, seed_q, timeout=0.2,
-                   avoid_collisions=True):
-        """Return joint positions (list, order of seed_names) or None."""
+                   avoid_collisions=True, extra=None):
+        """Return joint positions (list, order of seed_names) or None. extra: {joint: value}
+        set in the state too (e.g. the gripper opening the collision check should use;
+        default: the current one)."""
+        extra = extra or {}
         req = GetPositionIK.Request()
         r = req.ik_request
         r.group_name = self.group
         r.ik_link_name = link
         r.avoid_collisions = avoid_collisions
         r.robot_state = RobotState(joint_state=JointState(
-            name=list(seed_names), position=[float(v) for v in seed_q]))
+            name=list(seed_names) + list(extra),
+            position=[float(v) for v in seed_q] + [float(v) for v in extra.values()]))
         r.pose_stamped = PoseStamped()
         r.pose_stamped.header.frame_id = self.base
         fill_pose_msg(r.pose_stamped.pose, T_base_link)

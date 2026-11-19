@@ -28,10 +28,21 @@ class PlanMixin:
             if qi is None:
                 return None, (f'no IK at ({pi[0] * 1000:.0f}, {pi[1] * 1000:.0f}, '
                               f'{pi[2] * 1000:.0f}) mm: {self.ik_why(pi, ty, qs)}')
-            st = math.degrees(float(np.max(np.abs(qi - qs))))
+            dq = np.abs(qi - qs)
+            st = math.degrees(float(np.max(dq)))
             if st > a.max_step_jump:
-                return None, (f'joint step {st:.0f} deg at ({pi[0] * 1000:.0f}, '
-                              f'{pi[1] * 1000:.0f}, {pi[2] * 1000:.0f}) mm (IK branch flip'
+                j = int(np.argmax(dq))
+                at = f'({pi[0] * 1000:.0f}, {pi[1] * 1000:.0f}, {pi[2] * 1000:.0f}) mm'
+                # a big step right before the end of the line that cannot be reached at all:
+                # the arm straightens (J3 -> 0, singular), not a branch flip
+                if self.ik_fixed(p1, ty if ty1 is None else ty + turn, qs) is None:
+                    return None, (f'reach limit: arm nearly straight (J3 '
+                                  f'{math.degrees(qi[2]):.0f} deg) at {at}, the end '
+                                  f'({p1[0] * 1000:.0f}, {p1[1] * 1000:.0f}, '
+                                  f'{p1[2] * 1000:.0f}) mm r {math.hypot(p1[0], p1[1]) * 1000:.0f}'
+                                  f' mm is out of reach: '
+                                  f'{self.ik_why(p1, ty if ty1 is None else ty + turn, qs)}')
+                return None, (f'J{j + 1} step {st:.0f} deg at {at} (IK branch flip'
                               + (', or J6 at its limit while turning' if turn else '') + ')')
             qs = qi
         return qs, None
@@ -73,12 +84,26 @@ class PlanMixin:
                 raise first
             s, ap, e = last
             raise Stop(f'{first}\n  ... also lowered down to first pose {(s - h) * 1000:.0f} mm / '
-                       f'approach {(ap - h) * 1000:.0f} mm over the handle top, still failed: '
-                       + str(e).split('): ', 1)[-1])
+                       f'approach {(ap - h) * 1000:.0f} mm over the handle top, still failed:\n'
+                       + str(e).split('\n', 1)[-1])
         finally:
             a.servo_height, a.approach = keep
 
+    def leg_grip(self, name):
+        """Gripper opening a leg is planned with: open only --grasp-open far around the
+        handle (to it, after releasing), --hold-grip while the tray is held."""
+        a = self.args
+        if name in ('above', 'approach', 'grasp', 'p_lift', 'p_back'):
+            return a.grasp_open
+        return a.hold_grip                 # put, high, via*, p_high, p_put
+
     def _plan_pick(self, xy, yaw, place_xy=None, turn=None, rim=None):
+        try:
+            return self._plan_pick_(xy, yaw, place_xy, turn, rim)
+        finally:
+            self.plan_grip = None
+
+    def _plan_pick_(self, xy, yaw, place_xy=None, turn=None, rim=None):
         """The whole motion at once, before anything moves (pick and put back; with
         place_xy also the transfer and the place there):
           above (h + --servo-above) -> approach (h + --approach-above) -> grasp
@@ -124,6 +149,7 @@ class PlanMixin:
         # closest to the current joints first: a branch can be fine over the handle and
         # still flip a joint later (carry, put down)
         p_above = steps[0][1]
+        self.plan_grip = self.leg_grip('above')
         cands = {k: self.ik_above_all(p_above, math.remainder(yaw + k * math.pi, 2 * math.pi),
                                       q_now) for k in (0, 1)}
         carries = ([None] if place_xy is None else
@@ -148,6 +174,7 @@ class PlanMixin:
                 (cn, cp, carry_legs[i - 1][0] if i else 'high')
                 for i, (cn, cp) in enumerate(carry_legs)] + p_steps
             for name, p, frm in all_steps:
+                self.plan_grip = self.leg_grip(name)
                 yl = ty2 if name in ('p_put', 'p_lift') else ty
                 y_end = None
                 if name in yaw_of:
@@ -165,11 +192,7 @@ class PlanMixin:
                     else:
                         q, bad = self.line(legs[frm][0], p, yl, q_prev, y_end)
                 if q is None:
-                    why.append(f'tool yaw {math.degrees(ty):.0f}'
-                               + (f', IK branch {b + 1}/{len(cands[k])}'
-                                  if len(cands[k]) > 1 else '')
-                               + ('' if carry is None else f', carry z {carry * 1000:.0f} mm')
-                               + f': {name} leg: {bad}')
+                    why.append((ty, b, len(cands[k]), carry, name, bad))
                     legs = None
                     break
                 cost += math.degrees(float(np.max(np.abs(q - q_prev))))
@@ -181,6 +204,7 @@ class PlanMixin:
                 if rr > 1e-6:
                     back = pl[:2] * max(0.0, 1.0 - a.place_retreat / rr)
                     whyb = []
+                    self.plan_grip = self.leg_grip('p_back')
                     for dz in (0.03, 0.015, 0.0):
                         pb = np.array([back[0], back[1], pl[2] + dz])
                         # finer check: the arm is nearly stretched here, joints move fast
@@ -202,11 +226,23 @@ class PlanMixin:
                     best = (cost, ty, legs)
         if best is None:
             what = 'pick' + ('' if place_xy is None else ' + place')
-            raise Stop(f'{what} plan failed, nothing moved (handle ({x * 1000:.0f}, '
-                       f'{y * 1000:.0f}) mm, r {math.hypot(x, y) * 1000:.0f} mm'
-                       + ('' if place_xy is None else
-                          f', place ({place_xy[0] * 1000:.0f}, {place_xy[1] * 1000:.0f}) mm')
-                       + '): ' + '; '.join(why))
+            head = (f'{what} plan failed, nothing moved (handle ({x * 1000:.0f}, '
+                    f'{y * 1000:.0f}) mm, r {math.hypot(x, y) * 1000:.0f} mm'
+                    + ('' if place_xy is None else
+                       f', place ({place_xy[0] * 1000:.0f}, {place_xy[1] * 1000:.0f}) mm, '
+                       f'r {math.hypot(*place_xy[:2]) * 1000:.0f} mm') + ')')
+            place_chk = None
+            if place_xy is not None:
+                place_chk = []
+                for k in (0, 1):
+                    ty = math.remainder(yaw + k * math.pi, 2 * math.pi)
+                    ty2 = ty if not turn else ty + turn
+                    pp = p_steps[0][1]
+                    ok = self.ik_fixed(pp, ty2, q_now) is not None
+                    place_chk.append(f'tool yaw {math.degrees(math.remainder(ty2, 2 * math.pi)):.0f}'
+                                     + (': IK OK' if ok else
+                                        ': ' + self.ik_why(pp, ty2, q_now)))
+            raise Stop(head + '\n' + self.fail_report(why, place_chk))
         _, ty, legs = best
         if turn:
             print(f'  carry turns the tray {math.degrees(math.remainder(turn, 2 * math.pi)):+.0f}'
@@ -219,6 +255,53 @@ class PlanMixin:
                     carry=[n for n in legs if n.startswith('via')] + (['p_high']
                                                                        if 'p_high' in legs
                                                                        else []))
+
+    @staticmethod
+    def leg_stage(name):
+        """Leg name -> 'pick' / 'carry' / 'place'."""
+        if name in ('above', 'approach', 'grasp', 'put'):
+            return 'pick'
+        if name in ('p_put', 'p_lift'):
+            return 'place'
+        return 'carry'                   # high, via*, p_high
+
+    def fail_report(self, why, place_chk=None):
+        """_plan_pick failures [(ty, branch, n_branches, carry, leg, reason)] -> lines:
+        a verdict (which side, pick / carry / place, stopped every variant; the stage
+        reached furthest), then one line per distinct (tool yaw, branch, leg, reason) with
+        the carry heights it held for collapsed into a range."""
+        order = ('pick', 'carry', 'place')
+        stages = {self.leg_stage(w[4]) for w in why}
+        far = max(stages, key=order.index) if stages else 'pick'
+        legs = sorted({w[4] for w in why if self.leg_stage(w[4]) == far})
+        if far == 'pick':
+            verdict = (f'PICK side not reachable ({", ".join(legs)} leg): every variant '
+                       'fails before lifting the tray')
+        elif far == 'carry':
+            verdict = (f'CARRY not reachable ({", ".join(legs)} leg): the pick works, the '
+                       'move across to the place does not')
+        else:
+            verdict = (f'PLACE side not reachable ({", ".join(legs)} leg): pick and carry '
+                       'work, putting it down there does not')
+        out = [f'  => {verdict}']
+        if far == 'pick' and place_chk is not None:
+            out.append('     place put-down point alone (not reached by the plan): '
+                       + '; '.join(place_chk))
+        groups = {}
+        for ty, b, nb, carry, name, bad in why:
+            key = (round(math.degrees(ty)), b, nb, name, bad)
+            groups.setdefault(key, []).append(carry)
+        for (tyd, b, nb, name, bad), cs in groups.items():
+            cs = [c for c in cs if c is not None]
+            ctxt = ''
+            if cs:
+                lo, hi = min(cs) * 1000, max(cs) * 1000
+                ctxt = (f', carry z {lo:.0f} mm' if len(cs) == 1 else
+                        f', carry z {lo:.0f}..{hi:.0f} mm ({len(cs)} tried)')
+            out.append(f'     [{self.leg_stage(name)}] tool yaw {tyd}'
+                       + (f', IK branch {b + 1}/{nb}' if nb > 1 else '')
+                       + f'{ctxt}: {name} leg: {bad}')
+        return '\n'.join(out)
 
     def lift_out(self, p0, p_nom, yaw, q0):
         """After releasing: straight up from p0 to p_nom (--approach-above over the handle
@@ -278,7 +361,8 @@ class PlanMixin:
         T = make_T(rot_z(yaw) @ DOWN, p)
         for sd in seeds:
             self._check()
-            q = self.mv.compute_ik(T, TCP, ARM_JOINTS, sd, timeout=0.1)
+            q = self.mv.compute_ik(T, TCP, ARM_JOINTS, sd, timeout=0.1,
+                                   extra=self.grip_state())
             if q is None:
                 continue
             q = np.asarray(q)

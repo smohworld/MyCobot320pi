@@ -340,11 +340,12 @@ class App:
                 raise Stop(f'{name}: motion failed ({msg}), joints {err:.1f} deg off')
         time.sleep(0.1)
 
-    def gripper_async(self, open_):
+    def gripper_async(self, open_, pos=None):
         """Send a gripper command without waiting (e.g. open while the arm travels).
+        pos: open only this far (joint value) instead of --open-position.
         Returns wait() -> GripperCommand result (None in a dry run)."""
         self._check()
-        pos = self.args.open_position if open_ else 0.0
+        pos = (self.args.open_position if pos is None else pos) if open_ else 0.0
         what = 'open' if open_ else 'close'
         if not self.args.go:
             self.say(f'(dry run) gripper {what}')
@@ -365,9 +366,9 @@ class App:
             return res.result
         return wait
 
-    def gripper(self, open_):
+    def gripper(self, open_, pos=None):
         self._check()
-        pos = self.args.open_position if open_ else 0.0
+        pos = (self.args.open_position if pos is None else pos) if open_ else 0.0
         what = 'open' if open_ else 'close'
         if not self.args.go:
             self.say(f'(dry run) gripper {what}')

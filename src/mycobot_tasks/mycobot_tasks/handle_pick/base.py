@@ -117,7 +117,8 @@ class BaseApp(App):
         are a narrow band, so other seeds are tried too and the one closest to the seed wins."""
         T = make_T(rot_z(yaw) @ DOWN, p)
         seed = np.asarray(seed, float)
-        q = self.mv.compute_ik(T, TCP, ARM_JOINTS, seed, timeout=0.1)
+        ex = self.grip_state()
+        q = self.mv.compute_ik(T, TCP, ARM_JOINTS, seed, timeout=0.1, extra=ex)
         if q is not None:
             return np.asarray(q)
         j1 = float(np.arctan2(p[1], p[0]))
@@ -127,12 +128,18 @@ class BaseApp(App):
         best = None
         for sd in seeds:
             self._check()
-            q = self.mv.compute_ik(T, TCP, ARM_JOINTS, sd, timeout=0.1)
+            q = self.mv.compute_ik(T, TCP, ARM_JOINTS, sd, timeout=0.1, extra=ex)
             if q is not None:
                 cost = float(np.max(np.abs(np.asarray(q) - seed)))
                 if best is None or cost < best[0]:
                     best = (cost, np.asarray(q))
         return None if best is None else best[1]
+
+    def grip_state(self):
+        """{gripper joint: opening} the plan checks collisions with (plan_grip, set per leg
+        while planning), or {} = the current opening."""
+        g = getattr(self, 'plan_grip', None)
+        return {} if g is None else {'gripper_controller': float(g)}
 
     def ik_why(self, p, yaw, seed):
         """Why ik_fixed failed: 'collision' (solvable without the collision check) or 'reach'."""

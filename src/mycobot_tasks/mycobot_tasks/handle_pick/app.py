@@ -32,11 +32,11 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         self.bot = None                   # TurtleBot marker: dict(p, yaw, place_xy, place_z, ...)
         self.bot_extra = []               # place_scene options from the TurtleBot detection
         self.table_from_region = args.table_z is None
-        if self.table_from_region:        # tray surface = the tray region's z (RViz) or desk
-            r = rg.saved('tray', os.path.expanduser(args.regions))
+        if self.table_from_region:        # tray surface = the shelf region's z (RViz) or desk
+            r = rg.saved('shelf', os.path.expanduser(args.regions))
             args.table_z = r['z'] if r else -0.007
             print(f'--table-z {args.table_z:.3f} from '
-                  + ('the tray region (regions.yaml)' if r else 'the default (desk top)'),
+                  + ('the shelf region (regions.yaml)' if r else 'the default (desk top)'),
                   flush=True)
         App.__init__(self, node, args)
         if self.use_scene:
@@ -203,7 +203,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         p, q = plan['legs']['above']
         self.target = p
         self.confirm(f'open + above the handle ({xy[0] * 1000:.0f}, {xy[1] * 1000:.0f}) mm')
-        opened = self.gripper_async(True)
+        opened = self.gripper_async(True, self.args.grasp_open)
         self.move('above handle', q)
         opened()
         self.tip_report(p)
@@ -213,14 +213,16 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         a = self.args
         if a.place_at == 'bot':
             return np.array(self.bot['place_xy'], float)
+        if a.place_at == 'shelf':
+            return self.shelf_spot()[0]
         if a.place_offset:
             return np.asarray(xy[:2], float) + np.array(a.place_offset[:2], float)
         return np.array(a.place_at[:2], float)
 
     def act_pick_place(self):
         """Detect, plan everything (pick, transfer, place at --place-offset from the pick
-        spot or --place-at, back home), then: pick -> carry -> put down -> open -> up ->
-        home. Nothing moves when one leg has no plan."""
+        spot or --place-at), then: pick -> carry -> put down -> open -> up; the arm stays
+        there (no home). Nothing moves when one leg has no plan."""
         a = self.args
         if self.holding:
             raise Stop('already holding the tray')
@@ -229,13 +231,15 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
             if self.bot is None or not a.bot_reuse:     # every m: where is it now?
                 self.find_bot()
                 # default: the tray search starts right from the TurtleBot view (nothing
-                # seen there -> tray region scan); --bot-home: back to home first
+                # seen there -> shelf region scan); --bot-home: back to home first
                 if a.go and a.bot_home and home is not None:
                     self.move('back to home', home, mid=True)
         if a.place_z_spec == 'auto':
             a.place_z = self.bot['place_z']
         if a.place_yaw_spec == 'bot':
             a.place_yaw = math.degrees(self.bot['place_yaw'])
+        if a.place_at == 'shelf':         # the shelf region's surface
+            a.place_z = self.shelf_spot()[1]
         pin = self.detect_pin()
         xy = pin['p'][:2].copy()
         if self.wants_bot() and self.bot is not None and \
@@ -253,21 +257,25 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
                  f'({dst[0] * 1000:.0f}, {dst[1] * 1000:.0f}) mm, tray L->R '
                  f'{math.degrees(pin["yaw"]):.0f} -> '
                  f'{math.degrees(math.remainder(end_yaw, 2 * math.pi)):.0f} deg, surface z '
-                 f'{a.place_z * 1000:.0f} mm, then home')
+                 f'{a.place_z * 1000:.0f} mm')
         # onto the TurtleBot: the next tray is looked for where this one was picked
-        self.transfer(pin, plan, dst, home, remember=not self.wants_bot())
+        self.transfer(pin, plan, dst, remember=not self.wants_bot())
         if self.wants_bot() and a.go:     # surface from the measured handle top
             self.save_origin(pin, float(pin['p'][2]) - a.tray_height)
 
-    def transfer(self, pin, plan, dst, home, remember=True):
-        """Run a planned pick + place: pick -> up -> carry -> put down -> open -> up ->
-        home."""
+    def transfer(self, pin, plan, dst, remember=True):
+        """Run a planned pick + place: pick -> up -> carry -> put down -> open -> up
+        (-> back toward the base); the arm stays there (no home)."""
         a = self.args
-        self.do_pick(pin, plan)
         L = plan['legs']
-        self.confirm('carry: straight up, across over the place spot (tool yaw kept)')
-        self.move('up', L['above'][1], line=True, mid=True)
-        self.move('up high', L['high'][1], line=True, mid=True)
+        # grasp -> high is one vertical line (the plan checked grasp -> approach -> above ->
+        # high): tried as one LIN, split up only when that fails
+        direct = self.do_pick(pin, plan, lift_to=L['high'][1])
+        self.confirm('carry: ' + ('' if direct else 'straight up, ') +
+                     'across over the place spot (tool yaw kept)')
+        if not direct:
+            self.move('up', L['above'][1], line=True, mid=True)
+            self.move('up high', L['high'][1], line=True, mid=True)
         for n in plan['carry']:
             self.move(f'carry ({n})', L[n][1], line=True, mid=True)
         self.target = L['p_put'][0]
@@ -275,27 +283,42 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         self.move('put down', L['p_put'][1], line=True, velocity=a.grasp_velocity)
         self.tip_report(L['p_put'][0])
         self.confirm('open the gripper (release the tray)')
-        self.gripper(True)
+        self.gripper(True, a.grasp_open)
         self.holding, self.grip = False, None
         if remember:                     # where to look for this tray next time
             self._last_pin = np.array([dst[0], dst[1], a.place_z + a.tray_height])
-        self.confirm('lift straight up, then home')
+        self.confirm('lift straight up')
         self.move('lift', L['p_lift'][1], line=True, mid=True)
         if 'p_back' in L:
             self.move('back toward the base', L['p_back'][1], line=True, mid=True)
         self.target = None
-        self.move('home', home, mid=True)
-        self.say(f'tray placed at ({dst[0] * 1000:.0f}, {dst[1] * 1000:.0f}) mm, back home'
+        self.say(f'tray placed at ({dst[0] * 1000:.0f}, {dst[1] * 1000:.0f}) mm'
                  + ('' if a.go else ' (dry run)'))
 
-    def do_pick(self, pin, plan):
-        """Run the planned pick legs: open + above -> approach -> grasp -> close -> lift."""
+    def lift_direct(self, q):
+        """After grasping: one straight LIN up to q (the carry height). -> True when there;
+        False when Pilz / the driver refused it (the caller goes up in the planned steps
+        from wherever the arm is now). A stop request is passed on."""
+        try:
+            self.move('lift straight to the carry height (one LIN)', q, line=True, mid=True)
+            return True
+        except Stop as e:
+            if self._abort.is_set():
+                raise
+            self.say(f'one-LIN lift failed ({e}): going up in steps instead')
+            return False
+
+    def do_pick(self, pin, plan, lift_to=None):
+        """Run the planned pick legs: open + above -> approach -> grasp -> close -> lift.
+        lift_to: joints at the end of the vertical line over the grasp (e.g. 'high'): after
+        a good grasp the lift goes there in one LIN first, split up (lift to approach) when
+        that fails. -> True when the arm went straight to lift_to."""
         a = self.args
         xy = pin['p'][:2].copy()
         L = plan['legs']
         self.target = L['above'][0]
         self.confirm(f'open + above the handle ({xy[0] * 1000:.0f}, {xy[1] * 1000:.0f}) mm')
-        opened = self.gripper_async(True)
+        opened = self.gripper_async(True, self.args.grasp_open)
         self.move('above handle', L['above'][1], mid=True)
         opened()
         self.target = L['grasp'][0]
@@ -311,16 +334,22 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
             self.grip = dict(pin=xy, tcp_yaw=plan['tcp_yaw'], tray_yaw=pin['yaw'],
                              legs=L, heights=(a.grasp_z, a.approach, a.servo_height))
         else:
-            self.gripper(True)
-        self.confirm('lift straight up' + ('' if ok else ' (MISSED: gripper open again)'))
-        self.move('lift', L['approach'][1], line=True, mid=True)
+            self.gripper(True, a.grasp_open)
+        one = ok and lift_to is not None and not a.lift_split
+        self.confirm('lift straight up' + (' to the carry height' if one else '')
+                     + ('' if ok else ' (MISSED: gripper open again)'))
+        direct = one and self.lift_direct(lift_to)
+        if not direct:
+            self.move('lift', L['approach'][1], line=True, mid=True)
         if not ok:
             raise Stop('nothing between the fingers: gripper open again; d = detect again')
         self.pin = None
         self.say('tray picked' + ('' if a.go else ' (dry run)') +
-                 f': lifted level, finger tips '
-                 f'{(L["approach"][0][2] - L["grasp"][0][2] - a.grasp_depth) * 1000:.0f} mm over the '
-                 'handle top')
+                 (': lifted level in one LIN to the carry height' if direct else
+                  f': lifted level, finger tips '
+                  f'{(L["approach"][0][2] - L["grasp"][0][2] - a.grasp_depth) * 1000:.0f} mm '
+                  'over the handle top'))
+        return direct
 
     def act_place(self, centre=None):
         g = self.grip
@@ -334,7 +363,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
             self.move('put down', L['put'][1], line=True, velocity=a.grasp_velocity)
             self.tip_report(L['put'][0])
             self.confirm('open the gripper (release the tray)')
-            self.gripper(True)
+            self.gripper(True, a.grasp_open)
             self.holding, self.grip = False, None
             self.confirm('lift straight up')
             self.move('lift', L['approach'][1], line=True, mid=True)

@@ -33,7 +33,7 @@ def main():
       help='or the L-R marker centre spacing directly [m] (overrides --gap)')
     g('--max-spacing-err', type=float, default=0.004, help='refuse above this [m]')
     g('--max-tilt', type=float, default=10.0, help='marker plane tilt limit [deg]')
-    g('--grasp-depth', type=float, default=0.017,
+    g('--grasp-depth', type=float, default=0.015,
       help='finger tips this far below the handle top (marker plane) when grasping [m]')
     g('--approach-above', type=float, default=0.04,
       help='approach / lift: finger tips this far above the handle top [m]')
@@ -46,7 +46,7 @@ def main():
       help='TCP yaw relative to the L -> R line [deg]; fingers close along the TCP x '
            'axis, so 90 = across the bar')
     g('--table-z', type=float, default=None,
-      help='z of the surface the tray stands on, base frame [m] (default: the tray region z '
+      help='z of the surface the tray stands on, base frame [m] (default: the shelf region z '
            'from regions.yaml, else the desk top -0.007; below the desk e.g. the floor -0.306 '
            'or a shelf fork)')
     g('--no-scene', dest='scene', action='store_false',
@@ -60,6 +60,13 @@ def main():
     g('--place-drop', type=float, default=0.003,
       help='putting back: stop this far above the grasp height, then open [m]')
     g('--open-position', type=float, default=1.0, help='gripper open command (1.0 = 10 cm)')
+    g('--grasp-open', type=float, default=0.5,
+      help='opening around the handle: going down to grasp it and releasing it (0.5 = 5 cm; '
+           'fully open fingers reach the TurtleBot beside its box). Detection still opens '
+           '--open-position (fingers out of the camera view)')
+    g('--hold-grip', type=float, default=0.2,
+      help='gripper opening the legs with the tray held are planned with (collision check; '
+           '0 = closed)')
     # detection
     g('--frames', type=int, default=5, help='camera frames per detection')
     g('--pin-timeout', type=float, default=4.0, help='wait for them [s]')
@@ -85,6 +92,9 @@ def main():
       help='... and refused if one step moves any joint more than this [deg] (branch flip)')
     g('--grip-settle', type=float, default=0.8,
       help='after closing wait this long, then read the finger gap [s]')
+    g('--lift-split', action='store_true',
+      help='pick + place: after grasping go up in the planned steps (approach, above, '
+           'carry height) instead of trying one LIN to the carry height first')
     g('--max-j1-off', type=float, default=60.0,
       help='pick plan: J1 at most this far from the handle direction [deg]')
     g('--min-grip-gap', type=float, default=1.5,
@@ -115,15 +125,17 @@ def main():
     g('--search-min-height', type=float, default=0.18)
     g('--search', action='store_true', help='go to the search pose first (it becomes home)')
     g('--do', choices=['', 'none', 'detect', 'hover', 'pick', 'pickplace', 'find', 'bot',
-                       'sweep', 'return'],
+                       'sweep', 'return', 'shelf'],
       default='')
-    g('--place-at', type=lambda t: t if t == 'bot' else [float(v) for v in t.split(',')],
+    g('--place-at', type=lambda t: t if t in ('bot', 'shelf') else
+      [float(v) for v in t.split(',')],
       default=[0.0, -0.18],
       help="m (pick + place): put the handle midpoint down at this x,y in base [m] "
            "(default 0,-0.18: on the desk, 18 cm toward -y from the base); 'bot' = on the "
-           "TurtleBot (its marker + --bot-place-offset)")
+           "TurtleBot (its marker + --bot-place-offset); 'shelf' = the shelf region centre "
+           "(its z = the surface)")
     g('--place-yaw', default=None,
-      help="m: tray direction at the place = handle L -> R (ID 10 -> 11) angle in base "
+      help="m / k: tray direction at the place = handle L -> R (ID 10 -> 11) angle in base "
            "[deg] (0 = along +x, 90 = along +y); 'bot' = TurtleBot marker +x + "
            "--bot-yaw-offset; default: keep the picked direction")
     g('--place-z', default='-0.007',
@@ -131,8 +143,8 @@ def main():
            "'auto' = TurtleBot marker z - --bot-marker-dz")
     # regions / TurtleBot
     g('--regions', default=rg.PATH,
-      help='search regions (ros2 run mycobot_tasks regions, set in RViz): tray = where d / '
-           'f look when nothing is seen, bot = where t / m look for the TurtleBot')
+      help='search regions (ros2 run mycobot_tasks regions, set in RViz): shelf = where d / '
+           'f look when nothing is seen (the desk top for now), bot = where t / m look for the TurtleBot')
     g('--scan-height', type=float, default=None,
       help="region scan: camera this far over the region surface [m] (lower if unreachable); "
            "default: the region's camera height (regions.yaml, 0.28)")
@@ -170,6 +182,12 @@ def main():
     g('--bot-box-offset', type=lambda t: [float(v) for v in t.split(',')],
       default=[0.0, 0.0],
       help='scene: box centre from the marker centre, dx,dy in the marker frame [m]')
+    g('--bot-keepout-h', type=float, default=0.222,
+      help='while the TurtleBot pose is not known (finding it / the tray on it): its whole '
+           'area is an obstacle this high over the floor (Burger 0.192 with the LiDAR on top '
+           '+ 3 cm) and camera views keep the gripper tip over it [m]')
+    g('--bot-keepout-margin', type=float, default=0.03,
+      help='... the TurtleBot area (regions.yaml) grown by this on each side [m]')
     g('--no-bot-scene', dest='bot_scene', action='store_false',
       help="don't put the TurtleBot + box into the planning scene where the marker was found")
     g('--bot-reuse', action='store_true',
@@ -203,7 +221,7 @@ def main():
       help='warn when the measured handle top over --table-z differs more [m]')
     g('--carry-clear', type=float, default=0.03,
       help='m: carry the tray with its bottom this far over the place surface [m]')
-    g('--bot-rim', type=float, default=0.045,
+    g('--bot-rim', type=float, default=0.004,
       help='TurtleBot box rim over the surface the tray goes on (marker = box floor) [m]: '
            'carrying in and scanning while holding keep the tray bottom --carry-clear over it')
     g('--place-retreat', type=float, default=0.05,
@@ -275,6 +293,7 @@ def main():
                  'bot': ('find TurtleBot', app.act_find_bot),
                  'sweep': ('height sweep', app.act_sweep),
                  'return': ('TurtleBot -> origin', app.act_return),
+                 'shelf': ('TurtleBot -> shelf', app.act_bot_to_shelf),
                  'pick': ('pick', app.act_pick), 'pickplace': ('pick + place', app.act_pick_place)}
         if args.replay:
             app.submit('replay start', app.act_replay_start)

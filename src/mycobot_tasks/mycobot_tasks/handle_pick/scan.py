@@ -1,4 +1,4 @@
-"""Tray / TurtleBot region scan: look-down views over a region (RViz boxes in
+"""Shelf / TurtleBot region scan: look-down views over a region (RViz boxes in
 ~/.ros/regions.yaml), chase a tray seen at the image edge, last known positions."""
 import math
 import os
@@ -114,7 +114,7 @@ class ScanMixin:
         if r is None:
             raise Stop(f'no {rg.LABELS[name]} in {a.regions}: run '
                        '`ros2 run mycobot_tasks regions` and set it in RViz')
-        if name == 'tray' and self.table_from_region:
+        if name == 'shelf' and self.table_from_region:
             a.table_z = r['z']
         if not a.go:
             raise Stop(f'(dry run) scanning the {rg.LABELS[name]} needs camera moves: '
@@ -152,10 +152,10 @@ class ScanMixin:
         image (ArUco cannot read a cut marker) -> (x, y) on the surface z where the camera
         should look, or None. Size check against the marker (tray: also the tray body)."""
         a = self.args
-        size = a.marker_size if name == 'tray' else a.bot_marker_size
+        size = a.marker_size if name != 'bot' else a.bot_marker_size
         h_cam = max(0.05, float(T_bc[2, 3] - z))
         s = size * self.K[0, 0] / h_cam                       # expected marker side [px]
-        big = (0.20 / size) ** 2 if name == 'tray' else 1.6  # tray body up to ~20 cm
+        big = (0.20 / size) ** 2 if name != 'bot' else 1.6  # tray body up to ~20 cm
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         hh, ww = gray.shape
         otsu, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -275,6 +275,6 @@ class ScanMixin:
         return len(self.frames(2, single=True)) > 0
 
     def act_find_tray(self):
-        """f: scan the tray region from the start, then detect as d."""
-        self.scan_region('tray', self.tray_seen)
+        """f: scan the shelf region from the start, then detect as d."""
+        self.scan_region('shelf', self.tray_seen)
         self.detect_pin()

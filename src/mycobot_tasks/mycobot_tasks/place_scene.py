@@ -15,10 +15,15 @@ Layout (base frame, robot on a 29.9 cm desk, base 7 mm above the desk top):
          solid boxes from the floor to the desk top (user, 2026-11-19).
   mount  robot_mount: two support plates beside the base (y = +-mount_y, 0.5 cm thick),
          from the desk front end 3 cm out (+x), 3 cm over and 11 cm under the desk top.
-  bot    TurtleBot3 Burger (body --bot-body, --bot-height tall) with an open box on top:
-         inner 20 x 16 x 4 cm (box x = 20 cm side = ArUco marker +x), walls --wall thick.
-         Placed by its centre (--bot cx,cy) and yaw (default: box +x pointing away from the
-         base, i.e. the pin side -x toward the robot). Later: from the floor marker.
+  bot    a low open box BEHIND a TurtleBot3 Burger (user, 2026-11-19): box inner floor
+         --box-floor (0.026) over the floor, walls --box-depth (0.004) high, inner --box-inner,
+         the ArUco marker (ID 0) at the box floor centre, box x = marker +x; a support block
+         fills the 2-3 cm under it. The Burger (--bot-body L x W, --bot-height) stands on the
+         --bot-side of the box (box frame, default +y: user 2026-11-19; the box 20 cm side
+         along the Burger's back), --bot-gap away, its front pointing
+         away from the box; its camera sticks out of the front: --bot-cam out,width,centre
+         height (0.06, 0.07, 0.14), --bot-cam-h tall. Placed by the box centre (--bot
+         cx,cy,yaw: from the marker in tray_handle_pick).
   shelf  SISYPHUS robot shelf on the floor (--with-shelf), dimensions from its build guide
          (2026-11-13). Shelf frame: origin = base-plate FRONT-LEFT corner on the floor, +X to
          the right seen from the front, +Y back toward the rack, +Z up. Placed by --shelf
@@ -238,15 +243,28 @@ def build(a):
         hz = (rim - bottom) / 2 + bottom
         hh = rim - bottom
         objs['bot_box'] = [
-            (at(0, 0) + [bottom + a.wall / 2], [L + 2 * t, W + 2 * t, a.wall], yaw),   # floor
+            # floor plate + the support under it, down to the room floor
+            (at(0, 0) + [(floor_z + bottom + a.wall) / 2],
+             [L + 2 * t, W + 2 * t, bottom + a.wall - floor_z], yaw),
             (at(+(L + t) / 2, 0) + [hz], [t, W + 2 * t, hh], yaw),                    # far wall
             (at(-(L + t) / 2, 0) + [hz], [t, W + 2 * t, hh], yaw),                    # near wall
             (at(0, +(W + t) / 2) + [hz], [L, t, hh], yaw),
             (at(0, -(W + t) / 2) + [hz], [L, t, hh], yaw),
         ]
-        bx, by = a.bot_body
-        objs['turtlebot'] = [(at(0, 0) + [floor_z + (bottom - floor_z) / 2],
-                              [bx, by, bottom - floor_z], yaw)]
+        # the Burger on --bot-side of the box (box frame), front pointing away from it
+        bl, bw = a.bot_body                  # along its heading, across
+        m = a.bot_margin
+        dx, dy = {'+x': (1, 0), '-x': (-1, 0), '+y': (0, 1), '-y': (0, -1)}[a.bot_side]
+        half_box = (L / 2 + t) if dx else (W / 2 + t)
+        dc = half_box + a.bot_gap + bl / 2   # box centre -> Burger centre
+        hyaw = yaw + math.atan2(dy, dx)      # Burger heading in base
+        ox = at(dx * dc, dy * dc)
+        cam_out, cam_w, cam_z = a.bot_cam
+        cf = dc + bl / 2 + cam_out / 2       # camera block centre along the heading
+        objs['turtlebot'] = [
+            (ox + [floor_z + a.bot_height / 2], [bl + 2 * m, bw + 2 * m, a.bot_height], hyaw),
+            (at(dx * cf, dy * cf) + [floor_z + cam_z],
+             [cam_out + 2 * m, cam_w + 2 * m, a.bot_cam_h + 2 * m], hyaw)]
         near = at(-(L / 2 + t), 0)
         info.update(bot_xy=(cx, cy), yaw_deg=math.degrees(yaw), box_floor=inner_floor,
                     rim=rim, gap_to_edge=a.edge_y - rot(th, *near)[1])
@@ -391,7 +409,7 @@ def apply(objs, clear, base='base', keep_table=False, wait=10.0):
 
 
 LIST_OPTS = ('--shelf', '--shelf-points', '--edge-points', '--bot', '--desk-x',
-             '--box-inner', '--bot-body', '--leg-size')
+             '--box-inner', '--bot-body', '--leg-size', '--bot-cam')
 
 
 def join_negative(argv):
@@ -455,15 +473,28 @@ def make_parser():
                         'Default: 15 cm out from the edge, straight out from the base, '
                         'pointing away from it')
     a.add_argument('--box-inner', type=floats, default=[0.20, 0.16], help='inner L,W [m]')
-    a.add_argument('--box-depth', type=float, default=0.04, help='inner depth [m]')
-    a.add_argument('--box-floor', type=float, default=0.195,
-                   help='box inner floor height over the room floor [m] (MEASURE IT; '
-                        'Burger 0.192 + box bottom)')
+    a.add_argument('--box-depth', type=float, default=0.004, help='inner depth (walls) [m]')
+    a.add_argument('--box-floor', type=float, default=0.026,
+                   help='box inner floor (marker plane) height over the room floor [m] '
+                        '(box behind the Burger, 26 mm: user 2026-11-19)')
     a.add_argument('--wall', type=float, default=0.003, help='box wall / bottom thickness [m]')
     a.add_argument('--wall-margin', type=float, default=0.004,
                    help='box walls made this much thicker (outward) in the scene [m]')
-    a.add_argument('--bot-body', type=floats, default=[0.18, 0.18],
-                   help='Burger body footprint under the box [m]')
+    a.add_argument('--bot-body', type=floats, default=[0.138, 0.178],
+                   help='Burger body L (along its heading), W [m] (TurtleBot3 Burger spec)')
+    a.add_argument('--bot-height', type=float, default=0.192, help='Burger height [m]')
+    a.add_argument('--bot-side', choices=['+x', '-x', '+y', '-y'], default='+y',
+                   help='Burger on this side of the box (box frame = marker frame); its front '
+                        'points that way too')
+    a.add_argument('--bot-gap', type=float, default=0.0,
+                   help='box outer wall -> Burger back [m]')
+    a.add_argument('--bot-cam', type=floats, default=[0.06, 0.07, 0.14],
+                   help='Burger front camera: out past the front, width, centre height over '
+                        'the floor [m]')
+    a.add_argument('--bot-cam-h', type=float, default=0.04,
+                   help='camera block height [m] (not measured: a guess)')
+    a.add_argument('--bot-margin', type=float, default=0.01,
+                   help='Burger body / camera grown by this in the scene [m]')
     a.add_argument('--with-bot', action='store_true',
                    help='also add the TurtleBot + box (default: desk and floor only)')
     a.add_argument('--keep-table', action='store_true',

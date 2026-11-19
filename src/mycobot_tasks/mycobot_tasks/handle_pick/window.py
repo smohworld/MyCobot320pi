@@ -15,10 +15,11 @@ def view(app):
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     keys = {ord('p'): ('pick', app.act_pick), ord('v'): ('above handle', app.act_hover),
             ord('m'): ('pick + place', app.act_pick_place),
-            ord('f'): ('find tray (region scan)', app.act_find_tray),
+            ord('f'): ('find tray (shelf region scan)', app.act_find_tray),
             ord('t'): ('find TurtleBot', app.act_find_bot),
             ord('g'): ('height sweep', app.act_sweep),
             ord('r'): ('TurtleBot -> origin', app.act_return),
+            ord('k'): ('TurtleBot -> shelf', app.act_bot_to_shelf),
             ord('b'): ('put back', app.act_place),
             ord('h'): ('home', app.act_home), ord('d'): ('detect', app.act_detect),
             ord('u'): ('up', app.act_up), ord('s'): ('search pose', app.act_search),
@@ -70,7 +71,7 @@ def view(app):
                     _text(vis, 'Enter = go   x = cancel   a = auto', (10, 102), 0.55)
                 _text(vis, ('b put back  ' if app.holding else
                             'p pick  m pick+place  v above handle  ') +
-                           'f find tray  t find bot  r bot->origin  g sweep  h home  s search  u up  o/c grip  d detect  '
+                           'f find tray  t find bot  k bot->shelf  r bot->origin  g sweep  h home  s search  u up  o/c grip  d detect  '
                            'a auto  x stop  q quit',
                       (10, vis.shape[0] - 12), 0.45)
             except Exception as e:  # noqa: BLE001  (a drawing error must not end the app)

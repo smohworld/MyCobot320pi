@@ -66,7 +66,7 @@ class DetectMixin:
             return f'seen at an angle ({view:.0f} deg > --max-view)'
         return None
 
-    def detect_pin(self, region='tray'):
+    def detect_pin(self, region='shelf'):
         """Detect; when only one marker is seen, the markers are small, off the image centre
         or seen at an angle, the camera moves to look straight down at the (estimated)
         handle and measures again, at most --recenter times. Nothing seen: the camera looks

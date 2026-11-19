@@ -45,9 +45,10 @@ Check in simulation first: every detection (d / p / m) on the real robot is save
 moves the simulated arm to the detection pose, and m / p run the same plan in RViz.
 
 Regions (ros2 run mycobot_tasks regions, boxes dragged in RViz, ~/.ros/regions.yaml):
-  tray     d / p / m see nothing -> the camera looks down over the tray region, view by view
-           (--scan-height over its z, --scan-overlap), until a marker shows up; f = that scan
-           from the start. Without --table-z the tray region z is the tray surface.
+  shelf    (the desk top for now) d / p / m see nothing -> the camera looks down over the
+           shelf region, view by view (--scan-height over its z, --scan-overlap), until a
+           marker shows up; f = that scan from the start. Without --table-z the shelf region
+           z is the tray surface.
   bot      t = find the TurtleBot marker (ID --bot-id 0, DICT_4X4_50, 70 mm) here or over the
            bot region, look straight down at it, measure; the TurtleBot + box go into the
            planning scene there (marker = box floor centre, box +x = marker +x).
