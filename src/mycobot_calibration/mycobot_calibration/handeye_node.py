@@ -2,7 +2,7 @@
 
 Services (std_srvs/Trigger) under /handeye_calibrator/:
   plan     find the board, generate viewpoints, solve IK (MoveIt /compute_ik, collision
-           checked, joint limits incl. the J6 +-90 deg cable window) - no motion
+           checked, joint limits incl. the J6 window) - no motion
   run      plan if needed, then for every pose: MoveIt plan+execute -> settle -> capture;
            finally solve and save
   capture  one sample at the current pose (manual mode: move with RViz / by hand)

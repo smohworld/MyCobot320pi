@@ -9,7 +9,7 @@ Needs move_group running (e.g. handeye.launch.py). Lists the IK candidates only,
 
 x y = board centre in the base frame [m]. --height is tried first; if the camera cannot get
 that high above the board, lower heights are tried (down to --min-height). Solutions must keep
-J6 inside the +-90 deg cable window; the one farthest from the joint limits is used
+J6 inside its window (LIMITS); the one farthest from the joint limits is used
 (--pick N for another one from the list).
 """
 import argparse
@@ -28,8 +28,8 @@ from mycobot_calibration.geometry import inv, look_at, make_T, rot_z, transform_
 from mycobot_calibration.handeye_node import ARM_JOINTS
 from mycobot_calibration.moveit_client import MoveItClient
 
-# joint limits J1..J6 [deg] (URDF; J6: camera cable window)
-LIMITS = np.radians([167.9, 134.6, 145.0, 145.0, 167.9, 90.0])
+# joint limits J1..J6 [deg] (URDF; J6: same window as driver.yaml / joint_limits.yaml)
+LIMITS = np.radians([167.9, 134.6, 145.0, 145.0, 167.9, 179.9])
 SEEDS_J23 = [(0.0, 0.0), (-0.6, 1.2), (0.6, -1.2)]
 
 

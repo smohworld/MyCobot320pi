@@ -142,12 +142,13 @@ class MyCobotDriver(Node):
         if self.signs.shape != (6,) or self.offsets.shape != (6,) or \
                 not np.all(np.isin(self.signs, (-1.0, 1.0))):
             raise ValueError('joint_signs must be 6 values of +-1, joint_offsets_deg 6 values')
-        # Software joint limits [deg, URDF frame]. J6 is +-90 so the camera/gripper cable
-        # cannot wind up. Trajectories outside are rejected; every command is clamped to them.
+        # Software joint limits [deg, URDF frame] (driver.yaml; J6 +-180 since 2026-11-16, was
+        # +-90 for the camera/gripper cable). Trajectories outside are rejected; every command is
+        # clamped to them.
         hw_a = self.signs * np.array(ANGLE_MIN) + self.offsets
         hw_b = self.signs * np.array(ANGLE_MAX) + self.offsets
-        j_min = p('joint_min_deg', ANGLE_MIN[:5] + [-90.0]).value
-        j_max = p('joint_max_deg', ANGLE_MAX[:5] + [90.0]).value
+        j_min = p('joint_min_deg', ANGLE_MIN).value
+        j_max = p('joint_max_deg', ANGLE_MAX).value
         self.j_min = np.maximum(np.array(j_min, dtype=float), np.minimum(hw_a, hw_b))
         self.j_max = np.minimum(np.array(j_max, dtype=float), np.maximum(hw_a, hw_b))
         self.limit_margin = p('limit_margin_deg', 1.0).value      # tolerance before rejecting
