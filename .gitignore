@@ -11,3 +11,5 @@ hold_log.csv
 src/tray_yolo/runs/**/train_batch*
 # YOLO data / training (kept locally, not in git since 2026-11-19)
 src/tray_yolo/
+# Claude scratch exports
+Claude outputs/
