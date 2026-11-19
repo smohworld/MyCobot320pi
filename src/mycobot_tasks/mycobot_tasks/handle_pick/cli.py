@@ -100,11 +100,11 @@ def main():
     g('--lin-accel', type=float, default=0.5,
       help='LIN moves: acceleration scaling (Pilz checks the joint limits along the line)')
     g('--velocity', type=float, default=0.6)
-    g('--mid-settle', choices=['precise', 'once', 'fast'], default='fast',
+    g('--mid-settle', choices=['precise', 'once', 'fast'], default='precise',
       help='intermediate motions (lift, up, carry, back, home, over the handle / put spot): '
            'driver settle_mode. fast = no correction, done within the driver '
-           'fast_tolerance_deg; once = at most 1 correction; precise = as the grasp / put '
-           'down / camera views (settle + up to max_corrections)')
+           'fast_tolerance_deg; once = at most 1 correction; precise (default) = as before, '
+           'like the grasp / put down / camera views (settle + up to max_corrections)')
     g('--driver-node', default='mycobot_driver', help='driver node (settle_mode parameter)')
     g('--slow-velocity', type=float, default=0.25, help='near the tray: descent and lift')
     g('--grasp-velocity', type=float, default=None, help='descent only (default: slow)')

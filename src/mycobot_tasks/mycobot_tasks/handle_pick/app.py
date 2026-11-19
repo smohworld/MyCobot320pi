@@ -126,7 +126,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         mid: an intermediate motion (no grasp / put down / camera view at its end): the
         driver ends it per --mid-settle; others settle precisely."""
         a = self.args
-        if a.go and self._settle_now != 'unavailable':
+        if a.go and a.mid_settle != 'precise' and self._settle_now != 'unavailable':
             self.driver_settle(a.mid_settle if mid else 'precise')
         if a.planner == 'ompl':
             return super().move(name, q, slow=slow, velocity=velocity)
