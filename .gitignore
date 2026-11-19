@@ -9,3 +9,5 @@ ff_log.csv
 hold_log.csv
 *.pt
 src/tray_yolo/runs/**/train_batch*
+# YOLO data / training (kept locally, not in git since 2026-11-19)
+src/tray_yolo/

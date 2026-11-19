@@ -1,6 +1,0 @@
-path: /home/smoh/final_project_ws/src/tray_yolo/dataset
-train: images/train
-val: images/val
-names:
-  0: tray
-  1: pin
