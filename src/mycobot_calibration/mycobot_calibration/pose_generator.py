@@ -9,7 +9,6 @@ import numpy as np
 
 from mycobot_calibration.geometry import look_at, make_T, rot_angle, rot_z
 
-
 def board_pose_flat(target, center_xyz, yaw):
     """Board lying face up on the table, centre at center_xyz, x axis rotated by yaw."""
     R = rot_z(yaw) @ np.diag([1.0, -1.0, -1.0])       # z into the table

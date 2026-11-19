@@ -11,6 +11,9 @@ def make_T(R, t):
 
 
 def inv(T):
+    # 회전행렬, 병진행렬
+    # 회전행렬의 역은 회전행렬의 전치행렬이다.
+    # 병진행렬의 역은 -R^T * t이다.
     R, t = T[:3, :3], T[:3, 3]
     return make_T(R.T, -R.T @ t)
 
@@ -20,6 +23,7 @@ def rot_angle(R):
     return float(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)))
 
 
+# Angle-Axis (축-각) 회전행렬 만드는 함수
 def rvec_tvec_to_T(rvec, tvec):
     return make_T(cv2.Rodrigues(np.asarray(rvec, float).reshape(3))[0], tvec)
 
