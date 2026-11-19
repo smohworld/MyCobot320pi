@@ -168,9 +168,11 @@ class MyCobotDriver(Node):
         # settle_mode (runtime, ros2 param set / the task nodes per motion; taken when a
         # trajectory starts): precise = settle + up to max_corrections corrections (default);
         # once = at most 1 correction; fast = no correction: done as soon as every joint is
-        # within fast_tolerance_deg after the trajectory end (else when settled, goal_tolerance)
+        # within fast_tolerance_deg and still for fast_still_time after the trajectory end (else
+        # when settled, goal_tolerance)
         self.settle_mode = p('settle_mode', 'precise').value
         self.fast_tol = p('fast_tolerance_deg', 1.5).value
+        self.fast_still = p('fast_still_time', 0.2).value          # [s] fast: no motion this long
         if self.settle_mode not in SETTLE_MODES:
             raise ValueError(f'settle_mode must be one of {SETTLE_MODES}')
         self.add_on_set_parameters_callback(self._on_params)
@@ -363,6 +365,8 @@ class MyCobotDriver(Node):
                 self.settle_mode = prm.value
             elif prm.name == 'fast_tolerance_deg':
                 self.fast_tol = float(prm.value)
+            elif prm.name == 'fast_still_time':
+                self.fast_still = float(prm.value)
         return SetParametersResult(successful=True)
 
     def _stop_all(self):
@@ -508,12 +512,16 @@ class MyCobotDriver(Node):
                 job.err0_vec = err.copy()
             self._finish_goal(job, emax)
             return
-        if job.settle_mode == 'fast' and emax <= self.fast_tol:
-            self._finish_goal(job, emax)    # no err0_vec: not settled, kept out of ff_log
-            return
         # settled = the joints have not moved for settle_time since the last command
         if job.ref_q is None or np.max(np.abs(q - job.ref_q)) > self.settle_motion:
             job.ref_q, job.ref_t = q.copy(), now
+        # fast: within fast_tolerance_deg and briefly still (fast_still_time). Not while
+        # still moving: the next trajectory starts at the joints measured when it is
+        # planned, behind the moving arm -> it would first drive back (drop), then on.
+        if job.settle_mode == 'fast' and emax <= self.fast_tol and \
+                now - job.ref_t >= self.fast_still and now - job.final_sent_t >= self.fast_still:
+            self._finish_goal(job, emax)    # no err0_vec: not settled, kept out of ff_log
+            return
         settled = (now - job.ref_t >= self.settle_time and
                    now - job.final_sent_t >= self.settle_time)
         if t > job.duration + self.goal_timeout:

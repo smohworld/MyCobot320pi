@@ -44,7 +44,8 @@ mycobot_driver:
     max_corrections: 3          # 2 until 2026-11-13
     settle_mode: precise        # precise | once (max 1 correction) | fast (no correction); runtime,
                                 #   tray_handle_pick sets it per motion (--mid-settle)
-    fast_tolerance_deg: 1.5     # fast: done as soon as every joint is within this after the end
+    fast_tolerance_deg: 1.5     # fast: done when every joint is within this after the end ...
+    fast_still_time: 0.2        # ... and the joints have not moved for this long [s] (not while moving)
     correction_deadband_deg: 0.12  # 0.2 until 2026-11-13; servo step ~0.09 deg
     max_correction_deg: 6.0     # never command more than this beyond the target
     correction_speed: 20        # send_angles speed for the correction steps
