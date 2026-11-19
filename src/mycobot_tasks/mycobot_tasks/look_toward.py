@@ -20,7 +20,7 @@ Needs move_group and the driver running (e.g. handeye.launch.py). Lists only, un
 
 If the exact pose is out of reach, nearby standoffs (+-2 cm steps, up to --search-standoff)
 and, only with --pitch-search, nearby pitches are tried; what was used is printed.
-Image kept upright first (camera roll 0), then other rolls; J6 stays in its +-90 deg window.
+Image kept upright first (camera roll 0), then other rolls; J6 stays in its window (LIMITS).
 """
 import argparse
 import itertools

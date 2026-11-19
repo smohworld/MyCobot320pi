@@ -112,7 +112,11 @@ def project(p, T_base_cam, K, D):
     if pc[2] < 0.01:
         return None
     px, _ = cv2.projectPoints(pc.reshape(1, 3), np.zeros(3), np.zeros(3), K, D)
-    return tuple(int(round(v)) for v in px.reshape(2))
+    uv = px.reshape(2)
+    # far outside the image (point almost beside the camera): OpenCV drawing needs int32
+    if not np.all(np.isfinite(uv)) or np.max(np.abs(uv)) > 20000:
+        return None
+    return tuple(int(round(float(v))) for v in uv)
 
 
 # -------------------------------------------------------------------- node
