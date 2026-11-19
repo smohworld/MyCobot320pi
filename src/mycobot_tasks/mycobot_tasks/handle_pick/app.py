@@ -50,6 +50,8 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         self.bot_mp = MarkerPose(self.K, self.D, args.bot_marker_size)
         self.id_l = ID_OFFSET + 2 * args.tray
         self.id_r = self.id_l + 1
+        self._settle_now = None           # driver settle_mode last set (driver_settle)
+        self._settle_cli = None
 
     def apply_scene(self):
         """place_scene (desk, legs, robot supports, floor [+ TurtleBot / shelf from
@@ -83,11 +85,49 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         if not self.use_scene:
             super().set_table(margin)
 
-    def move(self, name, q, slow=False, velocity=None, line=False):
+    def driver_settle(self, mode):
+        """Driver settle_mode (precise / once / fast) for the next trajectories; only sent
+        when it changes. A driver without the parameter: warned once, motions stay precise."""
+        if mode == self._settle_now:
+            return
+        from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+        from rcl_interfaces.srv import SetParameters
+        if self._settle_cli is None:
+            self._settle_cli = self.node.create_client(
+                SetParameters, f'/{self.args.driver_node}/set_parameters')
+        why = None
+        if not self._settle_cli.wait_for_service(timeout_sec=0.5):
+            why = 'no parameter service'
+        else:
+            req = SetParameters.Request(parameters=[Parameter(
+                name='settle_mode', value=ParameterValue(type=ParameterType.PARAMETER_STRING,
+                                                         string_value=mode))])
+            fut = self._settle_cli.call_async(req)
+            t0 = time.monotonic()
+            while not fut.done() and time.monotonic() - t0 < 1.0:
+                time.sleep(0.005)
+            res = fut.result() if fut.done() else None
+            if res is None:
+                why = 'no answer'
+            elif not res.results or not res.results[0].successful:
+                why = res.results[0].reason if res.results else 'refused'
+        if why:
+            if self._settle_now != 'unavailable':
+                self.say(f'driver settle_mode {mode}: {why} (old driver?): every motion settles '
+                         'precisely')
+            self._settle_now = 'unavailable'
+            return
+        self._settle_now = mode
+
+    def move(self, name, q, slow=False, velocity=None, line=False, mid=False):
         """App.move with the Pilz planners (--planner pilz): line=True -> LIN (straight TCP
         line, tool orientation kept: descents, lifts, carrying the tray), else PTP (straight
-        in joint space). --planner ompl = the old behaviour (OMPL, any path)."""
+        in joint space). --planner ompl = the old behaviour (OMPL, any path).
+        mid: an intermediate motion (no grasp / put down / camera view at its end): the
+        driver ends it per --mid-settle; others settle precisely."""
         a = self.args
+        if a.go and self._settle_now != 'unavailable':
+            self.driver_settle(a.mid_settle if mid else 'precise')
         if a.planner == 'ompl':
             return super().move(name, q, slow=slow, velocity=velocity)
         self._check()
@@ -191,7 +231,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
                 # default: the tray search starts right from the TurtleBot view (nothing
                 # seen there -> tray region scan); --bot-home: back to home first
                 if a.go and a.bot_home and home is not None:
-                    self.move('back to home', home)
+                    self.move('back to home', home, mid=True)
         if a.place_z_spec == 'auto':
             a.place_z = self.bot['place_z']
         if a.place_yaw_spec == 'bot':
@@ -226,10 +266,10 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         self.do_pick(pin, plan)
         L = plan['legs']
         self.confirm('carry: straight up, across over the place spot (tool yaw kept)')
-        self.move('up', L['above'][1], line=True)
-        self.move('up high', L['high'][1], line=True)
+        self.move('up', L['above'][1], line=True, mid=True)
+        self.move('up high', L['high'][1], line=True, mid=True)
         for n in plan['carry']:
-            self.move(f'carry ({n})', L[n][1], line=True)
+            self.move(f'carry ({n})', L[n][1], line=True, mid=True)
         self.target = L['p_put'][0]
         self.confirm(f'put down at ({dst[0] * 1000:.0f}, {dst[1] * 1000:.0f}) mm')
         self.move('put down', L['p_put'][1], line=True, velocity=a.grasp_velocity)
@@ -240,11 +280,11 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         if remember:                     # where to look for this tray next time
             self._last_pin = np.array([dst[0], dst[1], a.place_z + a.tray_height])
         self.confirm('lift straight up, then home')
-        self.move('lift', L['p_lift'][1], line=True)
+        self.move('lift', L['p_lift'][1], line=True, mid=True)
         if 'p_back' in L:
-            self.move('back toward the base', L['p_back'][1], line=True)
+            self.move('back toward the base', L['p_back'][1], line=True, mid=True)
         self.target = None
-        self.move('home', home)
+        self.move('home', home, mid=True)
         self.say(f'tray placed at ({dst[0] * 1000:.0f}, {dst[1] * 1000:.0f}) mm, back home'
                  + ('' if a.go else ' (dry run)'))
 
@@ -256,7 +296,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         self.target = L['above'][0]
         self.confirm(f'open + above the handle ({xy[0] * 1000:.0f}, {xy[1] * 1000:.0f}) mm')
         opened = self.gripper_async(True)
-        self.move('above handle', L['above'][1])
+        self.move('above handle', L['above'][1], mid=True)
         opened()
         self.target = L['grasp'][0]
         self.confirm(f'descend: finger tips {a.grasp_depth * 1000:.0f} mm below the handle top')
@@ -273,7 +313,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         else:
             self.gripper(True)
         self.confirm('lift straight up' + ('' if ok else ' (MISSED: gripper open again)'))
-        self.move('lift', L['approach'][1], line=True)
+        self.move('lift', L['approach'][1], line=True, mid=True)
         if not ok:
             raise Stop('nothing between the fingers: gripper open again; d = detect again')
         self.pin = None
@@ -289,7 +329,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
             a, L = self.args, g['legs']
             self.target = L['put'][0]
             self.confirm('put back: over the pick spot')
-            self.move('place above', L['approach'][1], line=True)
+            self.move('place above', L['approach'][1], line=True, mid=True)
             self.confirm(f'put down: {a.place_drop * 1000:.0f} mm above the pick height')
             self.move('put down', L['put'][1], line=True, velocity=a.grasp_velocity)
             self.tip_report(L['put'][0])
@@ -297,7 +337,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
             self.gripper(True)
             self.holding, self.grip = False, None
             self.confirm('lift straight up')
-            self.move('lift', L['approach'][1], line=True)
+            self.move('lift', L['approach'][1], line=True, mid=True)
             self.say('tray put back' + ('' if a.go else ' (dry run)'))
             return
         raise Stop('no put back planned with a pick (started with --holding / restarted): '

@@ -24,6 +24,7 @@ import time
 import numpy as np
 import rclpy
 from control_msgs.action import FollowJointTrajectory, GripperCommand
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -47,6 +48,9 @@ FJT = FollowJointTrajectory.Result
 
 def _dur(d):
     return d.sec + d.nanosec * 1e-9
+
+
+SETTLE_MODES = ('precise', 'once', 'fast')
 
 
 class TrajJob:
@@ -73,6 +77,7 @@ class TrajJob:
         self.err0 = None              # error before the first correction [deg]
         self.err0_vec = None          # same, per joint (target - actual) [deg]
         self.bias = np.zeros(6)       # feedforward added to every command [deg]
+        self.settle_mode = 'precise'  # driver settle_mode when the trajectory was accepted
 
     @property
     def duration(self):
@@ -160,6 +165,15 @@ class MyCobotDriver(Node):
         # on the target. max_corrections 0 disables it.
         self.settle_tol = p('settle_tolerance_deg', 0.5).value     # done when all within
         self.max_corrections = p('max_corrections', 3).value
+        # settle_mode (runtime, ros2 param set / the task nodes per motion; taken when a
+        # trajectory starts): precise = settle + up to max_corrections corrections (default);
+        # once = at most 1 correction; fast = no correction: done as soon as every joint is
+        # within fast_tolerance_deg after the trajectory end (else when settled, goal_tolerance)
+        self.settle_mode = p('settle_mode', 'precise').value
+        self.fast_tol = p('fast_tolerance_deg', 1.5).value
+        if self.settle_mode not in SETTLE_MODES:
+            raise ValueError(f'settle_mode must be one of {SETTLE_MODES}')
+        self.add_on_set_parameters_callback(self._on_params)
         self.corr_deadband = p('correction_deadband_deg', 0.3).value  # leave smaller errors
         self.max_corr = p('max_correction_deg', 6.0).value         # |command - target| cap
         self.corr_speed = p('correction_speed', 30).value          # send_angles speed
@@ -340,6 +354,17 @@ class MyCobotDriver(Node):
             return res
         return cb
 
+    def _on_params(self, params):
+        for prm in params:
+            if prm.name == 'settle_mode':
+                if prm.value not in SETTLE_MODES:
+                    return SetParametersResult(
+                        successful=False, reason=f'settle_mode must be one of {SETTLE_MODES}')
+                self.settle_mode = prm.value
+            elif prm.name == 'fast_tolerance_deg':
+                self.fast_tol = float(prm.value)
+        return SetParametersResult(successful=True)
+
     def _stop_all(self):
         with self._lock:
             if self._traj is not None:
@@ -483,6 +508,9 @@ class MyCobotDriver(Node):
                 job.err0_vec = err.copy()
             self._finish_goal(job, emax)
             return
+        if job.settle_mode == 'fast' and emax <= self.fast_tol:
+            self._finish_goal(job, emax)    # no err0_vec: not settled, kept out of ff_log
+            return
         # settled = the joints have not moved for settle_time since the last command
         if job.ref_q is None or np.max(np.abs(q - job.ref_q)) > self.settle_motion:
             job.ref_q, job.ref_t = q.copy(), now
@@ -491,7 +519,9 @@ class MyCobotDriver(Node):
         if t > job.duration + self.goal_timeout:
             self._finish_goal(job, emax, timeout=True)
         elif settled:
-            if job.corrections < self.max_corrections:
+            limit = {'precise': self.max_corrections, 'once': min(1, self.max_corrections),
+                     'fast': 0}[job.settle_mode]
+            if job.corrections < limit:
                 if job.err0 is None:
                     job.err0 = emax
                     job.err0_vec = err.copy()
@@ -715,6 +745,7 @@ class MyCobotDriver(Node):
             times = np.array([0.0, max(d / self.max_joint_vel, 0.1)])
             pos = np.vstack([q_now, pos])
         job = TrajJob(times * scale, pos)
+        job.settle_mode = self.settle_mode
         move = pos[-1] - pos[0]
         c2 = math.radians(pos[-1][1])
         c3 = c2 + math.radians(pos[-1][2])

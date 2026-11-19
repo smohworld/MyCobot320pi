@@ -15,6 +15,7 @@ class BotMixin:
         """n fresh frames -> TurtleBot marker (--bot-id, --bot-marker-size) results:
         dict(p centre xyz base, yaw of the marker +x, normal, tilt, px, off, view)."""
         a = self.args
+        self.wait_still()          # a fast (--mid-settle) motion may end while still moving
         out, after, t0, got = [], time.monotonic(), time.monotonic(), 0
         while got < n and time.monotonic() - t0 < a.pin_timeout:
             img = self.node.fresh(after, timeout=1.0)
@@ -164,7 +165,7 @@ class BotMixin:
         home = self.home
         self.find_bot()
         if self.args.go and self.args.bot_home and home is not None:
-            self.move('home', home)
+            self.move('home', home, mid=True)
 
     def wants_bot(self):
         a = self.args

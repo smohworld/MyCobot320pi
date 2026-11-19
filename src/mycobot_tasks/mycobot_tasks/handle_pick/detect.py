@@ -18,6 +18,7 @@ class DetectMixin:
         single: one marker is enough (centre spacing measured at the detection, else the
         nominal --gap + --tile-size)."""
         a = self.args
+        self.wait_still()          # a fast (--mid-settle) motion may end while still moving
         out, after, t0 = [], time.monotonic(), time.monotonic()
         got = 0
         while got < n and time.monotonic() - t0 < a.pin_timeout:
@@ -369,4 +370,4 @@ class DetectMixin:
                  f'{np.max(np.linalg.norm(xy - xy.mean(0), axis=1)):.1f} mm from the mean '
                  f'(log: {a.detect_log})')
         if home is not None:
-            self.move('home', home)
+            self.move('home', home, mid=True)
