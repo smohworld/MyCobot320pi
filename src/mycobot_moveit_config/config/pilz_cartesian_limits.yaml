@@ -1,7 +1,8 @@
-# Limits for the Pilz planner (LIN/CIRC). Kept slow: the driver caps joints at 30 deg/s and
+# Limits for the Pilz planner (LIN/CIRC). Kept slow: the driver caps joints at 45 deg/s and
 # a trajectory it has to stretch in time can trip MoveIt's execution monitoring.
+# Deceleration = acceleration (was -0.2 until 2026-11-19: slow start, abrupt stop).
 cartesian_limits:
-  max_trans_vel: 0.05
+  max_trans_vel: 0.10
   max_trans_acc: 0.1
-  max_trans_dec: -0.2
+  max_trans_dec: -0.1
   max_rot_vel: 0.5

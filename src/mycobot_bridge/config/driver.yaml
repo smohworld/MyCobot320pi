@@ -17,7 +17,7 @@ mycobot_driver:
     stream_speed: 80            # send_angles speed 1..100 for streamed setpoints
     lookahead: 0.1              # s, command the point this far ahead (servo lag)
     min_step_deg: 0.1
-    max_joint_vel_deg: 30.0     # faster trajectories are stretched in time (see joint_limits.yaml)
+    max_joint_vel_deg: 45.0     # faster trajectories are stretched in time (see joint_limits.yaml); 30 until 2026-11-19
     # robot <-> URDF mapping: urdf_deg = sign * robot_deg + offset  (J1..J6)
     # Keep identity unless the real arm and RViz disagree. Check on the real robot:
     #   1) zero pose : robot at all 0 deg must look like RViz at all 0 (else fix offset)
@@ -28,11 +28,12 @@ mycobot_driver:
     # (same J5 +0.9/+1.0 in both; kin_check held-out reprojection 4.1 -> 2.6 px)
     joint_offsets_deg: [0.0, -0.33, 0.53, -0.79, 0.71, 0.0]
 
-    # software joint limits [deg, URDF frame] (J1..J6). J6 +-90: the camera/gripper cable winds up beyond
-    # that. Same window as joint6output_to_joint6 in mycobot_moveit_config/joint_limits.yaml.
+    # software joint limits [deg, URDF frame] (J1..J6). J6 +-180 (was +-90 until 2026-11-16 for the
+    # camera/gripper cable: check it does not wind up). Same window as joint6output_to_joint6 in
+    # mycobot_moveit_config/joint_limits.yaml and goto_lookdown.LIMITS.
     # Trajectories outside are rejected (INVALID_GOAL); commands are clamped to them.
-    joint_min_deg: [-168.0, -135.0, -145.0, -145.0, -168.0, -90.0]
-    joint_max_deg: [168.0, 135.0, 145.0, 145.0, 168.0, 90.0]
+    joint_min_deg: [-168.0, -135.0, -145.0, -145.0, -168.0, -180.0]
+    joint_max_deg: [168.0, 135.0, 145.0, 145.0, 168.0, 180.0]
     limit_margin_deg: 1.0
     start_tolerance_deg: 5.0
     goal_tolerance_deg: 3.0     # servos stop 2.0-3.4 deg off target (measured 2026-11-06)

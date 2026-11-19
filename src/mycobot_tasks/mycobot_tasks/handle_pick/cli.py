@@ -96,8 +96,8 @@ def main():
       help='pilz: straight lines (LIN) for every move near / with the tray, PTP otherwise; '
            'ompl: the old any-path planning')
     g('--lin-velocity', type=float, default=0.6,
-      help='LIN moves: scaling of pilz_cartesian_limits (max_trans_vel 0.05 m/s)')
-    g('--lin-accel', type=float, default=0.2,
+      help='LIN moves: scaling of pilz_cartesian_limits (max_trans_vel 0.10 m/s)')
+    g('--lin-accel', type=float, default=0.5,
       help='LIN moves: acceleration scaling (Pilz checks the joint limits along the line)')
     g('--velocity', type=float, default=0.6)
     g('--slow-velocity', type=float, default=0.25, help='near the tray: descent and lift')
