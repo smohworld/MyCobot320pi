@@ -338,13 +338,16 @@ class BotMixin:
     def act_bot_to_shelf(self):
         """k: the tray from the TurtleBot onto the shelf: detect it on the TurtleBot, plan
         everything, pick -> lift -> carry -> put down with the handle midpoint at the shelf
-        region centre (--place-yaw: tray L -> R direction there; default: kept)."""
+        region centre (--shelf-yaw, else a numeric --place-yaw: tray L -> R direction
+        there; default: kept)."""
         a = self.args
         if self.holding:
             raise Stop('holding the tray: put it down first')
         xy, z = self.shelf_spot()
         # only a number given for --place-yaw ('bot' = the TurtleBot direction, set by m)
         yaw = None if a.place_yaw_spec in (None, 'bot') else float(a.place_yaw_spec)
+        if a.shelf_yaw is not None:           # --shelf-yaw: the shelf direction on its own
+            yaw = a.shelf_yaw
         self.from_bot(xy, z, yaw, 'shelf centre')
 
     def from_bot(self, oxy, oz, yaw_deg, label):
@@ -375,7 +378,11 @@ class BotMixin:
                         if 'no look-down pose' not in str(e) and 'motion failed' not in str(e):
                             raise
                         print(f'  {e}: detecting from here', flush=True)
-                pin = self.detect_pin(region='bot')
+                self.expect_on_bot = True
+                try:
+                    pin = self.detect_pin(region='bot')
+                finally:
+                    self.expect_on_bot = False
                 xy = pin['p'][:2].copy()
                 # box floor from the measured handle top, TurtleBot (scene) from the tray
                 a.table_z = float(pin['p'][2]) - a.tray_height

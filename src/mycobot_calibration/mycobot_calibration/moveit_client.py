@@ -3,6 +3,7 @@
   /compute_ik            IK with collision checking (joint limits incl. the J6 window
                          come from joint_limits.yaml through the robot model)
   /move_action           plan (OMPL) + execute a joint-space goal, collision free
+  /sequence_move_group   Pilz: a chain of LIN / PTP goals blended into one trajectory
   /apply_planning_scene  table box so planned motions stay above the table
 
 Call these from a worker thread (not from an executor callback), the node must spin in
@@ -12,9 +13,9 @@ import threading
 
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import Pose, PoseStamped
-from moveit_msgs.action import MoveGroup
-from moveit_msgs.msg import (CollisionObject, Constraints, JointConstraint, MoveItErrorCodes,
-                             PlanningScene, RobotState)
+from moveit_msgs.action import MoveGroup, MoveGroupSequence
+from moveit_msgs.msg import (CollisionObject, Constraints, JointConstraint, MotionPlanRequest,
+                             MotionSequenceItem, MoveItErrorCodes, PlanningScene, RobotState)
 from moveit_msgs.srv import ApplyPlanningScene, GetPositionIK
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -46,6 +47,8 @@ class MoveItClient:
         self.scene = node.create_client(ApplyPlanningScene, 'apply_planning_scene',
                                         callback_group=cb)
         self.move = ActionClient(node, MoveGroup, 'move_action', callback_group=cb)
+        self.seq = ActionClient(node, MoveGroupSequence, 'sequence_move_group',
+                                callback_group=cb)
 
     def wait_ready(self, timeout=10.0):
         return (self.ik.wait_for_service(timeout_sec=timeout)
@@ -110,6 +113,49 @@ class MoveItClient:
             gh.cancel_goal_async()
             return False, 'motion timed out'
         code = res.result.error_code.val
+        return code == MoveItErrorCodes.SUCCESS, ERR.get(code, str(code))
+
+    def move_sequence(self, names, qs, blend_radii, velocity_scaling=0.3, accel_scaling=0.3,
+                      planner='LIN', planning_time=5.0, timeout=120.0, start=None):
+        """Pilz sequence: goals qs (joint values, order of names) one after another as ONE
+        trajectory, segment i blended into the next within blend_radii[i] [m] of its goal
+        (TCP); the last radius is forced to 0 (it stops there). Plan + execute, returns
+        (ok, message); nothing moved when planning failed. Needs the move_group capability
+        pilz_industrial_motion_planner/MoveGroupSequenceAction.
+        start: {joint: value} of the current state (arm + gripper): Pilz plans the sequence
+        from the request's start state (empty = all zeros, NOT the current one)."""
+        if not self.seq.wait_for_server(timeout_sec=1.0):
+            return False, 'no sequence_move_group action (Pilz sequence capability not loaded)'
+        g = MoveGroupSequence.Goal()
+        for i, q in enumerate(qs):
+            r = MotionPlanRequest()
+            r.group_name = self.group
+            r.pipeline_id, r.planner_id = 'pilz_industrial_motion_planner', planner
+            r.num_planning_attempts = 1
+            r.allowed_planning_time = float(planning_time)
+            r.max_velocity_scaling_factor = float(velocity_scaling)
+            r.max_acceleration_scaling_factor = float(accel_scaling)
+            r.goal_constraints = [Constraints(joint_constraints=[
+                JointConstraint(joint_name=n, position=float(v), tolerance_above=0.005,
+                                tolerance_below=0.005, weight=1.0) for n, v in zip(names, q)])]
+            # only the first item may carry a start state
+            if i == 0 and start:
+                r.start_state = RobotState(joint_state=JointState(
+                    name=list(start), position=[float(v) for v in start.values()]))
+            last = i == len(qs) - 1
+            g.request.items.append(MotionSequenceItem(
+                req=r, blend_radius=0.0 if last else float(blend_radii[i])))
+        g.planning_options.plan_only = False
+        gh = _wait(self.seq.send_goal_async(g), 10.0)
+        if gh is None or not gh.accepted:
+            return False, 'sequence_move_group rejected the goal'
+        self._active = gh
+        res = _wait(gh.get_result_async(), timeout)
+        self._active = None
+        if res is None:
+            gh.cancel_goal_async()
+            return False, 'motion timed out'
+        code = res.result.response.error_code.val
         return code == MoveItErrorCodes.SUCCESS, ERR.get(code, str(code))
 
     def cancel(self):

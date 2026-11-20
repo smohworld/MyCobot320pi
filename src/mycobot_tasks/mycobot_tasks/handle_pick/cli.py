@@ -33,7 +33,7 @@ def main():
       help='or the L-R marker centre spacing directly [m] (overrides --gap)')
     g('--max-spacing-err', type=float, default=0.004, help='refuse above this [m]')
     g('--max-tilt', type=float, default=10.0, help='marker plane tilt limit [deg]')
-    g('--grasp-depth', type=float, default=0.015,
+    g('--grasp-depth', type=float, default=0.020,
       help='finger tips this far below the handle top (marker plane) when grasping [m]')
     g('--approach-above', type=float, default=0.04,
       help='approach / lift: finger tips this far above the handle top [m]')
@@ -57,7 +57,7 @@ def main():
     g('--max-handle-h', type=float, default=0.15,
       help='handle top higher than this over --table-z = wrong --table-z [m]')
     g('--table-margin', type=float, default=0.012, help='desk collision box raised by this [m]')
-    g('--place-drop', type=float, default=0.003,
+    g('--place-drop', type=float, default=0.0015,
       help='putting back: stop this far above the grasp height, then open [m]')
     g('--open-position', type=float, default=1.0, help='gripper open command (1.0 = 10 cm)')
     g('--grasp-open', type=float, default=0.5,
@@ -138,6 +138,11 @@ def main():
       help="m / k: tray direction at the place = handle L -> R (ID 10 -> 11) angle in base "
            "[deg] (0 = along +x, 90 = along +y); 'bot' = TurtleBot marker +x + "
            "--bot-yaw-offset; default: keep the picked direction")
+    g('--shelf-yaw', type=float, default=None,
+      help="k (and m with --place-at shelf): tray direction when put down on the shelf = "
+           "handle L -> R angle in base [deg] (0 = +x, 90 = +y), independent of "
+           "--place-yaw (that one is for the TurtleBot); default: --place-yaw if it is a "
+           "number, else keep the picked direction")
     g('--place-z', default='-0.007',
       help="m: z of the surface the tray is put on, base frame [m] (desk top -0.007); "
            "'auto' = TurtleBot marker z - --bot-marker-dz")
@@ -231,6 +236,11 @@ def main():
       help='carry: a straight line passing closer than this to the base axis is replaced by '
            'an arc around the base [m] (0 = always straight)')
     g('--carry-arc-step', type=float, default=15.0, help='carry arc: a via point every [deg]')
+    g('--carry-blend', type=float, default=0.02,
+      help='carry high -> via* -> p_high: tried first as ONE blended Pilz LIN sequence (no '
+           'stop at the via points), corners rounded within this [m] (also capped at 40%% of '
+           'the shorter neighbouring segment); refused -> one LIN per leg as before (0 = '
+           'always one LIN per leg)')
     g('--carry-step', type=float, default=0.02,
       help='m: carry line not plannable -> try this much higher [m] ...')
     g('--carry-tries', type=int, default=6, help='... this many heights')
@@ -255,7 +265,7 @@ def main():
     while i < len(sys.argv) - 1:          # '--place-at -0.1,0.2': a value starting with '-'
         t = sys.argv[1 + i]
         nxt = sys.argv[2 + i] if i + 2 < len(sys.argv) else None
-        if t in ('--place-offset', '--place-at', '--place-yaw', '--place-z',
+        if t in ('--place-offset', '--place-at', '--place-yaw', '--place-z', '--shelf-yaw',
                  '--bot-place-offset', '--bot-box-offset') and nxt and nxt[:1] == '-':
             argv.append(f'{t}={nxt}')
             i += 2
@@ -292,7 +302,7 @@ def main():
                  'find': ('find tray', app.act_find_tray),
                  'bot': ('find TurtleBot', app.act_find_bot),
                  'sweep': ('height sweep', app.act_sweep),
-                 'return': ('TurtleBot -> origin', app.act_return),
+                 'return': ('TurtleBot -> back where m picked it', app.act_return),
                  'shelf': ('TurtleBot -> shelf', app.act_bot_to_shelf),
                  'pick': ('pick', app.act_pick), 'pickplace': ('pick + place', app.act_pick_place)}
         if args.replay:

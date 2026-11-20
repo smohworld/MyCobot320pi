@@ -60,8 +60,12 @@ def setup(context):
         parameters=[cfg.to_dict(), {'publish_robot_description_semantic': True,
                                     'monitor_dynamics': False,
                                     # MTC: execute task solutions (mycobot_tasks tray_pick_mtc)
+                                    # Pilz sequence: blended LIN chains in one trajectory
+                                    # (tray_handle_pick carry via points)
                                     'capabilities':
-                                        'move_group/ExecuteTaskSolutionCapability'}]))
+                                        'move_group/ExecuteTaskSolutionCapability '
+                                        'pilz_industrial_motion_planner/'
+                                        'MoveGroupSequenceAction'}]))
 
     if lc('rviz').lower() in ('true', '1'):
         actions.append(Node(

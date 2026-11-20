@@ -75,7 +75,7 @@ class ScanMixin:
                 T0 = look_at(eye, target)
                 best, found = None, 0
                 for roll in np.radians(np.arange(0, 360, 30)):
-                    if found >= 3:
+                    if found >= 3 and best[1][4] > 0:   # flipped wrist only: all rolls
                         break
                     T_ik = T0 @ make_T(rot_z(roll), np.zeros(3)) @ Xi @ T_l6_tcp
                     if T_ik[2, 3] < min_tip:
@@ -88,11 +88,12 @@ class ScanMixin:
                         q = np.asarray(q)
                         if np.min(1 - np.abs(q) / LIMITS) <= 0.05:
                             continue
-                        cost = 10.0 * (q[0] - j1) ** 2 + float(np.sum((q - q_now) ** 2))
+                        cost = self.view_cost(q, q_now, j1)
                         found += 1
                         if best is None or cost < best[0]:
                             best = (cost, q)
-                        break
+                        if q[4] > 0:
+                            break
                 if best is not None:
                     if pull:
                         print(f'  {name}: oblique view, camera {pull * 100:.0f} cm closer to '

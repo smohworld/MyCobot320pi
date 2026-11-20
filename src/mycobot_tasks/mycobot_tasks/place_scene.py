@@ -454,8 +454,8 @@ def make_parser():
     a.add_argument('--leg-size', type=floats, default=[0.28, 0.57],
                    help='desk legs at both x ends: size along x (desk long side), y [m]; '
                         'solid boxes floor -> desk top (0,0 = none)')
-    a.add_argument('--mount-y', type=float, default=0.066,
-                   help='robot support plates: centre |y| from the base axis [m] (the base '
+    a.add_argument('--mount-y', type=float, default=0.074,
+                   help='robot support plates: centre |y| from the base axis [m] (user 2026-11-20: 14.8 cm apart; the base '
                         'is 11.7 cm wide: plates closer than ~6.2 cm touch it in the scene)')
     a.add_argument('--mount-t', type=float, default=0.005, help='support plate thickness (y) [m]')
     a.add_argument('--mount-out', type=float, default=0.03,

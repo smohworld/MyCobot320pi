@@ -75,7 +75,7 @@ class BaseApp(App):
             T0 = look_at(target + [0.0, 0.0, h], target)
             best, found = None, 0
             for roll in np.radians(np.arange(0, 360, 30)):
-                if found >= 3:
+                if found >= 3 and best[1][4] > 0:     # flipped wrist only: all rolls
                     break
                 T_ik = T0 @ make_T(rot_z(roll), np.zeros(3)) @ np.linalg.inv(X) @ T_l6_tcp
                 if T_ik[2, 3] < min_tcp_z:
@@ -89,16 +89,27 @@ class BaseApp(App):
                     q = np.asarray(q)
                     if np.min(1 - np.abs(q) / LIMITS) <= 0.05:
                         continue
-                    cost = 10.0 * (q[0] - j1) ** 2 + float(np.sum((q - q_now) ** 2))
+                    cost = self.view_cost(q, q_now, j1)
                     found += 1
                     if best is None or cost < best[0]:
                         best = (cost, q)
-                    break                            # this roll is solved: next roll
+                    if q[4] > 0:
+                        break                        # this roll is solved: next roll
             if best is not None:
                 print(f'  look pose: {calls} IK calls, {time.monotonic() - t0:.1f} s', flush=True)
                 return best[1], h
         raise Stop(f'no look-down pose over ({tgt[0] * 1000:.0f}, {tgt[1] * 1000:.0f}) mm: '
                    'move the tray closer to the robot')
+
+    @staticmethod
+    def view_cost(q, q_now, j1):
+        """Camera view IK solution cost: J1 toward the target, least joint motion, and a
+        flipped wrist (J5 < 0) only as a last resort: the hand-eye was calibrated with J5 > 0
+        only (its error is pose dependent), the grasp poses use J5 > 0 too, and a PTP
+        between the two wrist branches swings the whole arm (J5 ~180 deg) through low
+        poses."""
+        return (10.0 * (q[0] - j1) ** 2 + float(np.sum((q - q_now) ** 2))
+                + (100.0 if q[4] < 0 else 0.0))
 
     def wait_still(self, timeout=0.6, tol_deg=0.03):
         """Until the measured joints stop changing (instead of a fixed settle sleep)."""
@@ -143,6 +154,16 @@ class BaseApp(App):
 
     def ik_why(self, p, yaw, seed):
         """Why ik_fixed failed: 'collision' (solvable without the collision check) or 'reach'."""
+        memo = getattr(self, '_memo', None)
+        key = ('why', tuple(np.round(p, 3)), round(float(yaw), 3))
+        if memo is not None and key in memo:
+            return memo[key]
+        r = self._ik_why(p, yaw, seed)
+        if memo is not None:
+            memo[key] = r
+        return r
+
+    def _ik_why(self, p, yaw, seed):
         T = make_T(rot_z(yaw) @ DOWN, p)
         for sd in [seed] + [np.array([0.0, j2, j3, 0.0, 0.0, 0.0]) for j2, j3 in SEEDS_J23]:
             if self.mv.compute_ik(T, TCP, ARM_JOINTS, sd, timeout=0.1,

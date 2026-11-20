@@ -9,9 +9,12 @@ file each time it scans (no restart needed).
   ros2 run mycobot_tasks regions --print         # show the saved regions, no ROS
   ros2 run mycobot_tasks regions --set bot --z -0.111 --view 0.35     # numbers, no ROS
   ros2 run mycobot_tasks regions --set shelf --x -0.15,0.05 --y 0.14,0.27
+  ros2 run mycobot_tasks regions --set bot --center 0.30,-0.05     # move, size kept
+  ros2 run mycobot_tasks regions --set bot --shift 0.02,0            # move by dx,dy
 
 Per region:
-  x, y   the box corners: drag sphere A / B in RViz (in the plane of the surface)
+  x, y   the box corners: drag sphere A / B in RViz (in the plane of the surface);
+         drag the box itself to move the whole region (size kept)
   z      the surface the tray / the TurtleBot marker is on (base frame) [m]
   view   camera height over that surface when scanning / measuring [m]
 Right click a sphere: 'surface z' and 'camera height' presets, 'reset this region'.
@@ -99,6 +102,23 @@ def pair(t):
     return sorted(v)
 
 
+def pair2(t):
+    v = [float(s) for s in t.split(',')]
+    if len(v) != 2:
+        raise argparse.ArgumentTypeError('two values: a,b')
+    return v
+
+
+def centre(r):
+    return (r['x'][0] + r['x'][1]) / 2, (r['y'][0] + r['y'][1]) / 2
+
+
+def move_to(r, cx, cy):
+    """Region centre to (cx, cy), width / depth kept."""
+    hx, hy = (r['x'][1] - r['x'][0]) / 2, (r['y'][1] - r['y'][0]) / 2
+    r['x'], r['y'] = [cx - hx, cx + hx], [cy - hy, cy + hy]
+
+
 def main():
     a = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     a.add_argument('--file', default=PATH)
@@ -108,11 +128,14 @@ def main():
     a.add_argument('--y', type=pair, help='--set: y range y0,y1 [m]')
     a.add_argument('--z', type=float, help='--set: surface z (base frame) [m]')
     a.add_argument('--view', type=float, help='--set: camera height over the surface [m]')
+    a.add_argument('--center', type=pair2,
+                   help='--set: move the region centre to cx,cy, size kept [m]')
+    a.add_argument('--shift', type=pair2, help='--set: move the region by dx,dy, size kept [m]')
     a.add_argument('--frame', default='base')
     argv, i = [], 0
     raw = sys.argv[1:]
     while i < len(raw):                   # '--y -0.6,-0.4' / '--z -0.1': negative values
-        if raw[i] in ('--x', '--y', '--z') and i + 1 < len(raw):
+        if raw[i] in ('--x', '--y', '--z', '--center', '--shift') and i + 1 < len(raw):
             argv.append(f'{raw[i]}={raw[i + 1]}')
             i += 2
         else:
@@ -125,6 +148,10 @@ def main():
         for k in ('x', 'y', 'z', 'view'):
             if getattr(args, k) is not None:
                 r[k] = getattr(args, k)
+        if args.center is not None:
+            move_to(r, *args.center)
+        if args.shift is not None:
+            move_to(r, *(c + d for c, d in zip(centre(r), args.shift)))
         save(regions, args.file)
         print('saved ' + describe(args.set, r))
         return
@@ -157,8 +184,10 @@ def main():
         im.pose.position.z = r['z'] + 0.005
         im.pose.orientation.w = 1.0
         im.scale = 0.1
-        c = InteractiveMarkerControl(always_visible=True,
-                                     interaction_mode=InteractiveMarkerControl.NONE)
+        # drag the box: the whole region moves in x / y, size kept
+        c = InteractiveMarkerControl(always_visible=True, name='move_xy',
+                                     interaction_mode=InteractiveMarkerControl.MOVE_PLANE)
+        c.orientation.w = c.orientation.y = 0.7071067811865476   # plane normal = base z
         m = Marker(type=Marker.CUBE)
         m.scale.x = max(0.005, r['x'][1] - r['x'][0])
         m.scale.y = max(0.005, r['y'][1] - r['y'][0])
@@ -197,8 +226,10 @@ def main():
         im.controls.append(c)
         return im
 
-    def publish(name, handles=True):
-        server.insert(box_marker(name))
+    def publish(name, handles=True, box=True):
+        if box:
+            server.insert(box_marker(name), feedback_callback=feedback)
+            menu.apply(server, f'{name}_box')
         if handles:
             for w in 'AB':
                 server.insert(handle_marker(name, w), feedback_callback=feedback)
@@ -213,6 +244,14 @@ def main():
     def feedback(fb):
         name, which = fb.marker_name.rsplit('_', 1)
         if name not in regions:
+            return
+        if which == 'box':
+            if fb.event_type == InteractiveMarkerFeedback.POSE_UPDATE:
+                move_to(regions[name], fb.pose.position.x, fb.pose.position.y)
+                publish(name, box=False)          # the corner spheres follow
+            elif fb.event_type == InteractiveMarkerFeedback.MOUSE_UP:
+                publish(name)
+                store(name)
             return
         if fb.event_type == InteractiveMarkerFeedback.POSE_UPDATE:
             r = regions[name]

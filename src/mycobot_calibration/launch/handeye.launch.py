@@ -12,6 +12,7 @@ Real robot (USB camera via OpenCV, intrinsics from config/camera.yaml by default
   own camera driver instead: camera:=false image_topic:=... (camera_info_topic or the file)
 Planning scene: mycobot_tasks place_scene (desk + floor) is applied at start (scene:=false
 to skip; scene_args:="--with-bot --bot 0.02,-0.40" for its options).
+Regions: mycobot_tasks regions runs too (RViz shelf / TurtleBot boxes; regions:=false to skip).
 then
   ros2 service call /handeye_calibrator/plan std_srvs/srv/Trigger   # preview in RViz
   ros2 service call /handeye_calibrator/run  std_srvs/srv/Trigger   # move + capture + solve
@@ -75,6 +76,12 @@ def setup(context):
             package='mycobot_tasks', executable='place_scene', name='place_scene',
             output='screen', arguments=['--wait', '60'] + shlex.split(lc('scene_args')))]))
 
+    if on('regions'):
+        # shelf / TurtleBot search regions (RViz Interact: drag the corner spheres to resize,
+        # the box itself to move it with the same size), saved to ~/.ros/regions.yaml
+        actions.append(Node(
+            package='mycobot_tasks', executable='regions', name='regions', output='screen'))
+
     actions.append(Node(
         package='mycobot_calibration', executable='handeye', name='handeye_calibrator',
         output='screen',
@@ -117,6 +124,7 @@ def generate_launch_description():
         'output_dir': '~/handeye_calib',
         'rviz': 'true',
         'scene': 'true',                 # apply mycobot_tasks place_scene (desk + floor)
+        'regions': 'true',               # mycobot_tasks regions (RViz shelf / TurtleBot boxes)
         'scene_args': '',                # place_scene options, e.g. "--with-bot --bot 0.02,-0.40"
     }
     return LaunchDescription(

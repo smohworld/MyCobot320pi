@@ -13,18 +13,13 @@ def view(app):
     node, args = app.node, app.args
     win = 'tray_handle_pick'
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    keys = {ord('p'): ('pick', app.act_pick), ord('v'): ('above handle', app.act_hover),
-            ord('m'): ('pick + place', app.act_pick_place),
-            ord('f'): ('find tray (shelf region scan)', app.act_find_tray),
-            ord('t'): ('find TurtleBot', app.act_find_bot),
-            ord('g'): ('height sweep', app.act_sweep),
-            ord('r'): ('TurtleBot -> origin', app.act_return),
+    to_bot = app.wants_bot()      # m puts the tray onto the TurtleBot (--place-at bot)
+    keys = {ord('p'): ('pick (any height)', app.act_pick),
+            ord('m'): ('shelf -> TurtleBot' if to_bot else 'pick + place', app.act_pick_place),
             ord('k'): ('TurtleBot -> shelf', app.act_bot_to_shelf),
-            ord('b'): ('put back', app.act_place),
-            ord('h'): ('home', app.act_home), ord('d'): ('detect', app.act_detect),
-            ord('u'): ('up', app.act_up), ord('s'): ('search pose', app.act_search),
-            ord('o'): ('open', lambda: app.gripper(True)),
-            ord('c'): ('close', lambda: app.gripper(False))}
+            ord('d'): ('detect (any height)', app.act_detect),
+            ord('s'): ('search pose', app.act_search),
+            ord('b'): ('put back', app.act_place)}
     live = MarkerPose(app.K, app.D, args.marker_size)    # own detector (window thread)
     after = 0.0
     while True:
@@ -69,10 +64,9 @@ def view(app):
                 if app.prompt:
                     _text(vis, f'NEXT: {app.prompt}', (10, 78), 0.55)
                     _text(vis, 'Enter = go   x = cancel   a = auto', (10, 102), 0.55)
-                _text(vis, ('b put back  ' if app.holding else
-                            'p pick  m pick+place  v above handle  ') +
-                           'f find tray  t find bot  k bot->shelf  r bot->origin  g sweep  h home  s search  u up  o/c grip  d detect  '
-                           'a auto  x stop  q quit',
+                _text(vis, ('b put back  ' if app.holding else '') + 'p pick  '
+                           + ('m shelf->bot' if to_bot else 'm pick+place')
+                           + '  k bot->shelf  d detect  s search  a auto  x stop  q quit',
                       (10, vis.shape[0] - 12), 0.45)
             except Exception as e:  # noqa: BLE001  (a drawing error must not end the app)
                 if not getattr(app, '_draw_err', False):

@@ -182,15 +182,31 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
                f'driver result {g0:.1f} mm, stalled {r.stalled}, reached {r.reached_goal})')
         return gap >= a.min_grip_gap, txt
 
+    def act_detect(self):
+        """d: detect the tray at any height (detect_any), nothing moves after."""
+        if self.holding:
+            raise Stop('holding the tray: put it down first')
+        keep = self.args.table_z
+        try:
+            self.detect_any()
+        finally:
+            self.args.table_z = keep
+
     def act_pick(self):
+        """p: detect the tray at any height (detect_any) and pick it there."""
         a = self.args
         if self.holding:
             raise Stop('already holding the tray')
-        pin = self.detect_pin()
-        plan = self.plan_pick(pin['p'][:2], pin['yaw'] + math.radians(a.grip_yaw_offset))
-        self.say(f'pick plan OK: above / approach / grasp / lift / put back, tool yaw '
-                 f'{math.degrees(plan["tcp_yaw"]):.0f} deg')
-        self.do_pick(pin, plan)
+        keep = a.table_z
+        try:
+            pin = self.detect_any()
+            plan = self.plan_pick(pin['p'][:2], pin['yaw'] + math.radians(a.grip_yaw_offset))
+            self.say(f'pick plan OK: above / approach / grasp / lift, tool yaw '
+                     f'{math.degrees(plan["tcp_yaw"]):.0f} deg, surface z '
+                     f'{a.table_z * 1000:.0f} mm')
+            self.do_pick(pin, plan)
+        finally:
+            a.table_z = keep
 
     def act_hover(self):
         """v: open + to the planned first pose over the handle (no servo, no grasp)."""
@@ -240,6 +256,8 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
             a.place_yaw = math.degrees(self.bot['place_yaw'])
         if a.place_at == 'shelf':         # the shelf region's surface
             a.place_z = self.shelf_spot()[1]
+            if a.shelf_yaw is not None:
+                a.place_yaw = a.shelf_yaw
         pin = self.detect_pin()
         xy = pin['p'][:2].copy()
         if self.wants_bot() and self.bot is not None and \
@@ -276,8 +294,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         if not direct:
             self.move('up', L['above'][1], line=True, mid=True)
             self.move('up high', L['high'][1], line=True, mid=True)
-        for n in plan['carry']:
-            self.move(f'carry ({n})', L[n][1], line=True, mid=True)
+        self.carry(L, plan['carry'])
         self.target = L['p_put'][0]
         self.confirm(f'put down at ({dst[0] * 1000:.0f}, {dst[1] * 1000:.0f}) mm')
         self.move('put down', L['p_put'][1], line=True, velocity=a.grasp_velocity)
@@ -294,6 +311,51 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, BaseApp):
         self.target = None
         self.say(f'tray placed at ({dst[0] * 1000:.0f}, {dst[1] * 1000:.0f}) mm'
                  + ('' if a.go else ' (dry run)'))
+
+    def carry(self, L, names):
+        """high -> via* -> p_high: first as ONE blended Pilz LIN sequence (no stop at the
+        via points); when that is refused or breaks off, one LIN per leg as before, from
+        the planned point the arm is at / nearest to."""
+        a = self.args
+        if len(names) > 1 and a.carry_blend > 0 and a.planner == 'pilz':
+            if not a.go:
+                self.say(f'(dry run) carry: {" -> ".join(names)} in one blended sequence')
+                return
+            pts = [L['high'][0]] + [L[n][0] for n in names]
+            seg = [float(np.linalg.norm(pts[i + 1] - pts[i])) for i in range(len(names))]
+            # radius at goal i: within both neighbouring segments (Pilz: blend spheres of
+            # neighbouring goals must not overlap)
+            radii = [min(a.carry_blend, 0.4 * seg[i], 0.4 * seg[i + 1])
+                     for i in range(len(names) - 1)] + [0.0]
+            if a.mid_settle != 'precise' and self._settle_now != 'unavailable':
+                self.driver_settle(a.mid_settle)
+            self._check()
+            self.say(f'moving: carry {" -> ".join(names)} (one blended LIN sequence, corners '
+                     f'{max(radii) * 1000:.0f} mm)')
+            q0 = self.node.q()
+            start = None if q0 is None else dict(zip(ARM_JOINTS, q0))
+            if start is not None and 'gripper_controller' in self.node.js:
+                start['gripper_controller'] = self.node.js['gripper_controller']
+            ok, msg = self.mv.move_sequence(ARM_JOINTS, [L[n][1] for n in names], radii,
+                                            a.lin_velocity, a.lin_accel, start=start)
+            self._check()
+            if ok:
+                time.sleep(0.1)
+                return
+            # resume per leg after the planned point nearest to the arm now
+            q_now = self.node.q()
+            chain = ['high'] + list(names)
+            rest = list(names)
+            if q_now is not None:
+                err = [math.degrees(float(np.max(np.abs(q_now - L[n][1])))) for n in chain]
+                i = int(np.argmin(err))
+                # at a planned point: on from the next one; between points: to the nearest
+                rest = chain[i + 1:] if err[i] <= 3.0 else chain[max(1, i):]
+            self.say(f'carry sequence failed ({msg}): one LIN per leg instead ('
+                     + ' -> '.join(rest) + ')')
+            names = rest
+        for n in names:
+            self.move(f'carry ({n})', L[n][1], line=True, mid=True)
 
     def lift_direct(self, q):
         """After grasping: one straight LIN up to q (the carry height). -> True when there;

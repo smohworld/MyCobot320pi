@@ -57,11 +57,12 @@ Regions (ros2 run mycobot_tasks regions, boxes dragged in RViz, ~/.ros/regions.y
   tray L -> R = marker +x + --bot-yaw-offset:
   ros2 run mycobot_tasks tray_handle_pick --go --real --place-at bot --place-z auto
 
-Window: p pick   m pick + place + home   b put the tray back where it was picked
-        f find tray (region scan)   t find TurtleBot
-        v above the handle (open, no grasp)
-        d detect   h home   s search pose   u up   o / c open / close the gripper
+Window: p pick (any height)   d detect (any height)   m pick + place
+        k TurtleBot -> shelf   s search pose   b put the tray back where p picked it
         Enter next step   a auto / step mode   x / SPACE stop   q quit
+  d / p: the tray is looked for from here (then the last position, the shelf region, the
+  TurtleBot region); the surface it stands on = handle top - --tray-height, so no
+  --table-z is needed. In the TurtleBot box: the TurtleBot goes into the scene from the tray.
 """
 from mycobot_tasks.handle_pick.cli import main
 

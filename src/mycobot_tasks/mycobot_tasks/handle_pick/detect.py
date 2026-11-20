@@ -87,6 +87,10 @@ class DetectMixin:
         for attempt in range(a.recenter + 1):
             q0 = self.node.q()
             res = self.frames(a.frames, single=True)
+            if getattr(self, 'auto_height', False) and res:
+                # d / p: the surface follows the measured handle top (any height), so the
+                # camera moves below (look_at / tracking) aim at the right plane
+                a.table_z = float(np.median([r['p'][2] for r in res])) - a.tray_height
             q1 = self.node.q()
             if q0 is None or q1 is None or np.max(np.abs(q1 - q0)) > np.radians(0.5):
                 raise Stop('the arm moved during detection: try again when it stands still')
@@ -129,6 +133,41 @@ class DetectMixin:
             looked = xy
         raise Stop('detection failed')
 
+    def detect_any(self):
+        """d / p: the tray at any height. Detect from here (nothing seen: last position,
+        shelf region scan); still nothing -> the TurtleBot region scan (TurtleBot area kept
+        out while searching). The surface the tray stands on = measured handle top -
+        --tray-height (no --table-z needed). A tray found in the TurtleBot box: the
+        TurtleBot + box go into the planning scene from the tray (its marker is hidden).
+        Sets a.table_z to that surface; the caller restores it."""
+        a = self.args
+        self.auto_height = True
+        try:
+            try:
+                pin = self.detect_pin(region='shelf')
+            except Stop as e:
+                rb = self.region('bot')
+                if rb is None or not a.go or not ('not seen' in str(e) or
+                                                  'nothing found' in str(e)):
+                    raise
+                self.say(f'{e}: looking in the TurtleBot region next')
+                a.table_z = rb['z']
+                with self.bot_search(rb['z']):
+                    pin = self.detect_pin(region='bot')
+        finally:
+            self.auto_height = False
+        rb = self.region('bot')
+        p = pin['p']
+        if rb is not None and rb['x'][0] - 0.05 <= p[0] <= rb['x'][1] + 0.05 and \
+                rb['y'][0] - 0.05 <= p[1] <= rb['y'][1] + 0.05 and \
+                abs(a.table_z - rb['z']) < 0.03:
+            self.say('the tray stands in the TurtleBot box')
+            self.bot = self.bot_from_tray(pin)
+            self.save_bot()
+            self.bot_to_scene()
+        self.say(f'surface under the tray (auto): z {a.table_z * 1000:.0f} mm in base')
+        return pin
+
     def track_to(self, xy):
         if not self.args.go:
             raise Stop('(dry run) the camera would move there first: run with --go')
@@ -155,6 +194,8 @@ class DetectMixin:
                        f'{a.spacing * 1000:.1f} mm (--gap {(a.spacing - a.tile_size) * 1000:.1f}'
                        ' + --tile-size): wrong --gap / --marker-size, or markers moved?')
         self.spacing = spacing
+        if getattr(self, 'auto_height', False):     # d / p: surface = handle top - tray
+            a.table_z = float(p[2]) - a.tray_height
         self.set_heights(p[2] - a.table_z)
         self.pin = dict(p=p, yaw=yaw)
         self._last_pin = p.copy()
@@ -175,6 +216,14 @@ class DetectMixin:
         a.grasp_z = h - a.grasp_depth
         a.approach = h + a.approach_above
         a.servo_height = h + a.servo_above
+        on_bot = getattr(self, 'expect_on_bot', False)
+        if on_bot and abs(h - a.tray_height) > max(a.tray_height_tol, 0.03):
+            # r / k: the tray must be IN the TurtleBot box; the one seen stands elsewhere
+            raise Stop(f'r / k take the tray FROM the TurtleBot, but the tray seen is not '
+                       f'on it: handle top {(a.table_z + h) * 1000:.0f} mm in base, the '
+                       f'surface under it ~{(a.table_z + h - a.tray_height) * 1000:.0f} mm '
+                       f'(TurtleBot box floor {a.table_z * 1000:.0f} mm). Shelf / desk -> '
+                       'TurtleBot is m (with --place-at bot)')
         if a.tray_height and abs(h - a.tray_height) > a.tray_height_tol:
             self.say(f'WARNING: handle top {h * 1000:.0f} mm over --table-z, but --tray-height '
                      f'is {a.tray_height * 1000:.0f} mm: the surface is at '

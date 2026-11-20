@@ -17,6 +17,21 @@ class PlanMixin:
         (else the arm flips between IK branches and a joint move would not follow the
         line). -> (q at p1, None) or (None, why)."""
         a = self.args
+        memo = getattr(self, '_memo', None)
+        if memo is not None:
+            # one plan_pick tries many variants (tool yaw, IK branch, carry height, lowered
+            # heights) that share legs: each distinct leg is solved once
+            key = ('line', tuple(np.round(p0, 4)), tuple(np.round(p1, 4)), round(ty, 4),
+                   None if ty1 is None else round(ty1, 4), tuple(np.round(q0, 3)),
+                   self.plan_grip, a.step_check)
+            if key not in memo:
+                memo[key] = self._line(p0, p1, ty, q0, ty1)
+            q, why = memo[key]
+            return (None if q is None else q.copy()), why
+        return self._line(p0, p1, ty, q0, ty1)
+
+    def _line(self, p0, p1, ty, q0, ty1=None):
+        a = self.args
         turn = 0.0 if ty1 is None else math.remainder(ty1 - ty, 2 * math.pi)
         n = max(1, int(math.ceil(float(np.linalg.norm(p1 - p0)) / a.step_check)),
                 int(math.ceil(abs(math.degrees(turn)) / 5.0)))
@@ -68,6 +83,9 @@ class PlanMixin:
             tries.append((s, s))
             s -= 0.01
         first = last = None
+        outer = getattr(self, '_memo', None) is None
+        if outer:
+            self._memo = {}
         try:
             for s, ap in tries:
                 a.servo_height, a.approach = s, ap
@@ -88,6 +106,8 @@ class PlanMixin:
                        + str(e).split('\n', 1)[-1])
         finally:
             a.servo_height, a.approach = keep
+            if outer:
+                self._memo = None
 
     def leg_grip(self, name):
         """Gripper opening a leg is planned with: open only --grasp-open far around the
@@ -342,8 +362,12 @@ class PlanMixin:
             th = th0 + dth * i / n
             r = max(a.carry_min_r, r0 + (r1 - r0) * i / n)
             out.append((f'via{i}', np.array([r * math.cos(th), r * math.sin(th), z])))
-        print(f'  carry: straight line would pass {closest * 1000:.0f} mm from the base axis '
-              f'(< --carry-min-r): arc with {n - 1} via points', flush=True)
+        memo = getattr(self, '_memo', None)
+        if memo is None or 'arc_said' not in memo:
+            print(f'  carry: straight line would pass {closest * 1000:.0f} mm from the base '
+                  f'axis (< --carry-min-r): arc with {n - 1} via points', flush=True)
+            if memo is not None:
+                memo['arc_said'] = True
         return out + [('p_high', np.array([u, v, z]))]
 
     def ik_above_all(self, p, yaw, q_now):
