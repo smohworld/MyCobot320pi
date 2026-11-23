@@ -375,10 +375,25 @@ class PlanMixin:
         facing the handle -> the distinct solutions (any joint > 10 deg apart), J1 closest
         to the handle direction (weighted) and the least motion first. Solutions with J1
         more than --max-j1-off from the handle direction (arm reaching over its back) are
-        not used."""
+        not used, except the reversed arm (J1 ~180 deg off, J2..J4 mirrored) as a fallback
+        when no normal one is found (--no-flip = never)."""
         j1 = math.atan2(p[1], p[0])
-        seeds = [q_now] + [np.array([j1, j2, j3, 0.0, 0.0, 0.0]) for j2, j3 in SEEDS_J23] + [
-            np.array([j1, a2, a3, a4, 0.0, 0.0]) for a2, a3, a4 in
+        sols = self._ik_above(p, yaw, q_now, j1, flip=False)
+        if not sols and not self.args.no_flip:
+            sols = self._ik_above(p, yaw, q_now, j1, flip=True)
+            if sols:
+                print(f'  above ({p[0] * 1000:.0f}, {p[1] * 1000:.0f}) mm: no normal arm pose, '
+                      f'reversed arm (J1 {math.degrees(sols[0][1][0]):+.0f} deg)', flush=True)
+        return [q for _, q in sorted(sols, key=lambda t: t[0])]
+
+    def _ik_above(self, p, yaw, q_now, j1, flip):
+        """(cost, q) of the distinct solutions with J1 within --max-j1-off of the handle
+        direction (flip: of the opposite direction, seeds mirrored)."""
+        jc = math.remainder(j1 + (math.pi if flip else 0.0), 2 * math.pi)
+        m = -1.0 if flip else 1.0
+        seeds = ([] if flip else [q_now]) + [
+            np.array([jc, m * j2, m * j3, 0.0, 0.0, 0.0]) for j2, j3 in SEEDS_J23] + [
+            np.array([jc, m * a2, m * a3, m * a4, 0.0, 0.0]) for a2, a3, a4 in
             ((-0.8, -1.2, 0.4), (0.3, -1.8, 0.0), (-1.2, -0.6, 0.3), (0.6, -2.0, -0.2),
              (-1.2, 0.4, -0.7))]
         sols = []
@@ -390,10 +405,10 @@ class PlanMixin:
             if q is None:
                 continue
             q = np.asarray(q)
-            off = abs(math.remainder(q[0] - j1, 2 * math.pi))
+            off = abs(math.remainder(q[0] - jc, 2 * math.pi))
             if math.degrees(off) > self.args.max_j1_off:
                 continue
             if any(np.max(np.abs(q - s)) < math.radians(10) for _, s in sols):
                 continue
             sols.append((10.0 * off ** 2 + float(np.sum((q - q_now) ** 2)), q))
-        return [q for _, q in sorted(sols, key=lambda t: t[0])]
+        return sols

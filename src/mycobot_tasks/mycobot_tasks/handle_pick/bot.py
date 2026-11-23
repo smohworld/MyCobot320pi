@@ -350,6 +350,41 @@ class BotMixin:
             yaw = a.shelf_yaw
         self.from_bot(xy, z, yaw, 'shelf centre')
 
+    def measure_tray_on_bot(self):
+        """The tray in the TurtleBot box: looked for at the bot region height (regions.yaml
+        z) with the TurtleBot area kept out (its marker lies under the tray), measured ->
+        pin; --table-z = the box floor from the measured handle top, heights set, and
+        self.bot (+ scene) from the tray (bot_from_tray). The caller restores --table-z."""
+        a = self.args
+        rb = self.region('bot')
+        z0 = rb['z'] if rb else (self.bot['place_z'] if self.bot else None)
+        if z0 is None:
+            raise Stop(f'no TurtleBot area in {a.regions} (its z = the box floor): run '
+                       '`ros2 run mycobot_tasks regions`')
+        a.table_z = z0                        # the tray stands in the TurtleBot box
+        with self.bot_search(z0):        # Burger / LiDAR pose unknown: kept out
+            if a.go and self.bot is not None:     # found this session: look there first
+                try:
+                    self.look_over(self.bot['place_xy'][0], self.bot['place_xy'][1], z0,
+                                   'over the TurtleBot',
+                                   view=self.view_height(rb) if rb else None)
+                except Stop as e:
+                    if 'no look-down pose' not in str(e) and 'motion failed' not in str(e):
+                        raise
+                    print(f'  {e}: detecting from here', flush=True)
+            self.expect_on_bot = True
+            try:
+                pin = self.detect_pin(region='bot')
+            finally:
+                self.expect_on_bot = False
+            # box floor from the measured handle top, TurtleBot (scene) from the tray
+            a.table_z = float(pin['p'][2]) - a.tray_height
+            self.set_heights(a.tray_height)
+            self.bot = self.bot_from_tray(pin)
+            self.save_bot()
+            self.bot_to_scene()
+        return pin
+
     def from_bot(self, oxy, oz, yaw_deg, label):
         """Tray on the TurtleBot -> put down with the handle midpoint at oxy on the surface
         oz [m], tray L -> R yaw_deg (None = as it is on the TurtleBot).
@@ -357,39 +392,12 @@ class BotMixin:
         The tray is looked for at the bot region height (regions.yaml z), and the TurtleBot
         pose for the planning scene comes from the tray (bot_from_tray)."""
         a = self.args
-        rb = self.region('bot')
-        z0 = rb['z'] if rb else (self.bot['place_z'] if self.bot else None)
-        if z0 is None:
-            raise Stop(f'no TurtleBot area in {a.regions} (its z = the box floor): run '
-                       '`ros2 run mycobot_tasks regions`')
         keep = (a.table_z, a.place_z, a.place_at)
         try:
-            a.table_z = z0                        # the tray stands in the TurtleBot box
-            self.say(f'tray on the TurtleBot (box floor z {z0 * 1000:.0f} mm) -> {label} '
-                     f'({oxy[0] * 1000:.0f}, {oxy[1] * 1000:.0f}) mm, surface z '
-                     f'{oz * 1000:.0f} mm')
-            with self.bot_search(z0):        # Burger / LiDAR pose unknown: kept out
-                if a.go and self.bot is not None:     # found this session: look there first
-                    try:
-                        self.look_over(self.bot['place_xy'][0], self.bot['place_xy'][1], z0,
-                                       'over the TurtleBot',
-                                       view=self.view_height(rb) if rb else None)
-                    except Stop as e:
-                        if 'no look-down pose' not in str(e) and 'motion failed' not in str(e):
-                            raise
-                        print(f'  {e}: detecting from here', flush=True)
-                self.expect_on_bot = True
-                try:
-                    pin = self.detect_pin(region='bot')
-                finally:
-                    self.expect_on_bot = False
-                xy = pin['p'][:2].copy()
-                # box floor from the measured handle top, TurtleBot (scene) from the tray
-                a.table_z = float(pin['p'][2]) - a.tray_height
-                self.set_heights(a.tray_height)
-                self.bot = self.bot_from_tray(pin)
-                self.save_bot()
-                self.bot_to_scene()
+            self.say(f'tray on the TurtleBot -> {label} ({oxy[0] * 1000:.0f}, '
+                     f'{oxy[1] * 1000:.0f}) mm, surface z {oz * 1000:.0f} mm')
+            pin = self.measure_tray_on_bot()
+            xy = pin['p'][:2].copy()
             a.place_z, a.place_at = oz, [float(oxy[0]), float(oxy[1])]
             turn = None
             if yaw_deg is not None:

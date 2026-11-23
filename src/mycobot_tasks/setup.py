@@ -27,6 +27,7 @@ setup(
             'tray_handle_pick = mycobot_tasks.tray_handle_pick:main',
             'place_scene = mycobot_tasks.place_scene:main',
             'regions = mycobot_tasks.regions:main',
+            'layout = mycobot_tasks.layout:main',
         ],
     },
 )

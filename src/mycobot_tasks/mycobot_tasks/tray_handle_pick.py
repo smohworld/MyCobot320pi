@@ -6,7 +6,7 @@ printed top edges toward the same side). Grasp point = midpoint of the two marke
 the handle top = the marker plane. The fingers close ACROSS the bar (perpendicular to the
 L -> R line, --grip-yaw-offset 90) and go --grasp-depth below the handle top.
 
-Code: mycobot_tasks/handle_pick/ (base, detect, scan, bot, plan, app, window, cli).
+Code: mycobot_tasks/handle_pick/ (base, detect, scan, bot, plan, relay, app, window, cli).
 Window, keys, step mode, pick plan check, level lift, put back:
   detect   --frames camera frames, both markers in every used frame -> median midpoint,
            L -> R yaw, handle top z (refused if the marker plane tilts > --max-tilt)
@@ -57,8 +57,19 @@ Regions (ros2 run mycobot_tasks regions, boxes dragged in RViz, ~/.ros/regions.y
   tray L -> R = marker +x + --bot-yaw-offset:
   ros2 run mycobot_tasks tray_handle_pick --go --real --place-at bot --place-z auto
 
+Relay over the desk (handle_pick/relay.py), shelf D11 <-> TurtleBot:
+  n (--do d11bot) in two parts: camera over D11 (layout pose --relay-d11), tray measured,
+    D11 with the reversed arm -> desk spot (--relay-spots, tilted <= --relay-tilt carry)
+    planned (no plan / not seen: arm back to where n started, error) and run; then the
+    TurtleBot marker measured, empty arm switch -> regrasp -> into the box planned and run
+  j (--do botd11) tray on the TurtleBot measured -> the same backwards onto D11 (empty)
+  sim: ros2 run mycobot_tasks tray_handle_pick --replay ~/.ros/layout_tray.yaml \
+         --bot-save ~/.ros/layout_bot.yaml --regions ~/.ros/layout_regions.yaml \
+         --scene-args=--layout --do d11bot [--go]   (j: --replay ~/.ros/layout_tray_bot.yaml)
+
 Window: p pick (any height)   d detect (any height)   m pick + place
-        k TurtleBot -> shelf   s search pose   b put the tray back where p picked it
+        k TurtleBot -> shelf   n D11 -> TurtleBot   j TurtleBot -> D11
+        s search pose   b put the tray back where p picked it
         Enter next step   a auto / step mode   x / SPACE stop   q quit
   d / p: the tray is looked for from here (then the last position, the shelf region, the
   TurtleBot region); the surface it stands on = handle top - --tray-height, so no

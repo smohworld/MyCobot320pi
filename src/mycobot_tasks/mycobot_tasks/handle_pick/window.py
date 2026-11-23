@@ -17,6 +17,8 @@ def view(app):
     keys = {ord('p'): ('pick (any height)', app.act_pick),
             ord('m'): ('shelf -> TurtleBot' if to_bot else 'pick + place', app.act_pick_place),
             ord('k'): ('TurtleBot -> shelf', app.act_bot_to_shelf),
+            ord('n'): ('D11 -> desk -> TurtleBot', app.act_d11_to_bot),
+            ord('j'): ('TurtleBot -> desk -> D11', app.act_bot_to_d11),
             ord('d'): ('detect (any height)', app.act_detect),
             ord('s'): ('search pose', app.act_search),
             ord('b'): ('put back', app.act_place)}
@@ -66,7 +68,7 @@ def view(app):
                     _text(vis, 'Enter = go   x = cancel   a = auto', (10, 102), 0.55)
                 _text(vis, ('b put back  ' if app.holding else '') + 'p pick  '
                            + ('m shelf->bot' if to_bot else 'm pick+place')
-                           + '  k bot->shelf  d detect  s search  a auto  x stop  q quit',
+                           + '  k bot->shelf  n D11->bot  j bot->D11  d detect  s search  a auto  x stop  q quit',
                       (10, vis.shape[0] - 12), 0.45)
             except Exception as e:  # noqa: BLE001  (a drawing error must not end the app)
                 if not getattr(app, '_draw_err', False):

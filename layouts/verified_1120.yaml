@@ -1,0 +1,21 @@
+# ros2 run mycobot_tasks layout, 2026-11-20 17:23:03
+desk_x:
+- -1.0344
+- 0.0656
+edge_y: -0.5062
+robot_yaw: -0.0418
+bot:
+- 0.2456
+- -0.046
+- 270.3065
+with_bot: true
+shelf:
+- 0.36
+- 0.11
+- 90.0
+with_shelf: true
+shelf_x: -0.097
+fork_top: 0.263
+fork_y: 0.0
+tray_yaw_off: 90.0
+show_tray: false

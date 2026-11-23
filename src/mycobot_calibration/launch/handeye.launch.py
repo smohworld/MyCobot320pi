@@ -13,6 +13,9 @@ Real robot (USB camera via OpenCV, intrinsics from config/camera.yaml by default
 Planning scene: mycobot_tasks place_scene (desk + floor) is applied at start (scene:=false
 to skip; scene_args:="--with-bot --bot 0.02,-0.40" for its options).
 Regions: mycobot_tasks regions runs too (RViz shelf / TurtleBot boxes; regions:=false to skip).
+Layout: with sim:=true mycobot_tasks layout runs too (RViz handles: robot direction, desk,
+TurtleBot, shelf, D11; ~/.ros/layout.yaml) and place_scene gets --layout; layout:=true / false
+to force it on / off (on the real robot it puts the simulated shelf into the planning scene).
 then
   ros2 service call /handeye_calibrator/plan std_srvs/srv/Trigger   # preview in RViz
   ros2 service call /handeye_calibrator/run  std_srvs/srv/Trigger   # move + capture + solve
@@ -69,12 +72,20 @@ def setup(context):
                          'height': int(lc('height')),
                          'camera_calibration_file': calib_file}]))
 
+    layout = sim if lc('layout').lower() in ('', 'auto') else on('layout')
+    scene_args = shlex.split(lc('scene_args'))
+    if layout and '--layout' not in scene_args:
+        scene_args.append('--layout')        # same scene as the layout node (no race)
     if on('scene'):
         # desk / floor (+ TurtleBot / shelf via scene_args) from mycobot_tasks place_scene,
         # once move_group is up; it also removes the 1.5 x 1.5 m 'calibration_table'
         actions.append(TimerAction(period=3.0, actions=[Node(
             package='mycobot_tasks', executable='place_scene', name='place_scene',
-            output='screen', arguments=['--wait', '60'] + shlex.split(lc('scene_args')))]))
+            output='screen', arguments=['--wait', '60'] + scene_args)]))
+    if layout:
+        # robot direction / desk / TurtleBot / shelf / D11 handles in RViz (namespace /layout)
+        actions.append(TimerAction(period=4.0, actions=[Node(
+            package='mycobot_tasks', executable='layout', name='layout', output='screen')]))
 
     if on('regions'):
         # shelf / TurtleBot search regions (RViz Interact: drag the corner spheres to resize,
@@ -125,6 +136,7 @@ def generate_launch_description():
         'rviz': 'true',
         'scene': 'true',                 # apply mycobot_tasks place_scene (desk + floor)
         'regions': 'true',               # mycobot_tasks regions (RViz shelf / TurtleBot boxes)
+        'layout': 'auto',                # mycobot_tasks layout: auto = with sim:=true only
         'scene_args': '',                # place_scene options, e.g. "--with-bot --bot 0.02,-0.40"
     }
     return LaunchDescription(

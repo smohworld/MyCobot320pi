@@ -4,6 +4,7 @@
                          come from joint_limits.yaml through the robot model)
   /move_action           plan (OMPL) + execute a joint-space goal, collision free
   /sequence_move_group   Pilz: a chain of LIN / PTP goals blended into one trajectory
+  /execute_trajectory    run a joint trajectory computed elsewhere (no planning)
   /apply_planning_scene  table box so planned motions stay above the table
 
 Call these from a worker thread (not from an executor callback), the node must spin in
@@ -13,7 +14,7 @@ import threading
 
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import Pose, PoseStamped
-from moveit_msgs.action import MoveGroup, MoveGroupSequence
+from moveit_msgs.action import ExecuteTrajectory, MoveGroup, MoveGroupSequence
 from moveit_msgs.msg import (CollisionObject, Constraints, JointConstraint, MotionPlanRequest,
                              MotionSequenceItem, MoveItErrorCodes, PlanningScene, RobotState)
 from moveit_msgs.srv import ApplyPlanningScene, GetPositionIK
@@ -48,6 +49,8 @@ class MoveItClient:
                                         callback_group=cb)
         self.move = ActionClient(node, MoveGroup, 'move_action', callback_group=cb)
         self.seq = ActionClient(node, MoveGroupSequence, 'sequence_move_group',
+                                callback_group=cb)
+        self.exe = ActionClient(node, ExecuteTrajectory, 'execute_trajectory',
                                 callback_group=cb)
 
     def wait_ready(self, timeout=10.0):
@@ -156,6 +159,26 @@ class MoveItClient:
             gh.cancel_goal_async()
             return False, 'motion timed out'
         code = res.result.response.error_code.val
+        return code == MoveItErrorCodes.SUCCESS, ERR.get(code, str(code))
+
+    def execute(self, joint_trajectory, timeout=300.0):
+        """Execute a ready trajectory_msgs/JointTrajectory (first point = the current
+        joints, within MoveIt's allowed_start_tolerance) through move_group. Returns
+        (ok, message)."""
+        from moveit_msgs.msg import RobotTrajectory
+        if not self.exe.wait_for_server(timeout_sec=2.0):
+            return False, 'no execute_trajectory action'
+        g = ExecuteTrajectory.Goal(trajectory=RobotTrajectory(joint_trajectory=joint_trajectory))
+        gh = _wait(self.exe.send_goal_async(g), 10.0)
+        if gh is None or not gh.accepted:
+            return False, 'execute_trajectory rejected the goal'
+        self._active = gh
+        res = _wait(gh.get_result_async(), timeout)
+        self._active = None
+        if res is None:
+            gh.cancel_goal_async()
+            return False, 'motion timed out'
+        code = res.result.error_code.val
         return code == MoveItErrorCodes.SUCCESS, ERR.get(code, str(code))
 
     def cancel(self):

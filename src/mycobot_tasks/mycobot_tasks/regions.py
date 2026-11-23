@@ -39,11 +39,10 @@ DEFAULTS = {
 COLOURS = {'shelf': (0.1, 0.8, 0.2), 'bot': (0.2, 0.4, 1.0)}
 LABELS = {'shelf': 'shelf area', 'bot': 'TurtleBot area'}
 # surface presets (base frame z): place_scene desk top -0.007, floor -0.306 (desk 0.299),
-# TurtleBot box floor (floor + 0.026, box behind the Burger), shelf fork tops L1..L3 (floor + 0.254 / 0.419 / 0.584)
+# TurtleBot box floor (floor + 0.026, box behind the Burger)
 FLOOR = -0.306
 Z_PRESETS = [('desk top', -0.007), ('TurtleBot box floor', FLOOR + 0.026),
-             ('floor', FLOOR), ('shelf L1 fork', FLOOR + 0.254),
-             ('shelf L2 fork', FLOOR + 0.419), ('shelf L3 fork', FLOOR + 0.584)]
+             ('floor', FLOOR)]
 VIEW_PRESETS = [0.20, 0.24, 0.28, 0.32, 0.36, 0.40]
 
 

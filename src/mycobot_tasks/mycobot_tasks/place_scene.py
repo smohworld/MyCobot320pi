@@ -11,10 +11,15 @@ Layout (base frame, robot on a 29.9 cm desk, base 7 mm above the desk top):
          read `ros2 run tf2_ros tf2_echo base gripper_tcp`, pass x1,y1,x2,y2 (base, m) ->
          --robot-yaw and --edge-y are computed from them.
   floor  --desk-height below the desk top (z = -0.306).
-  legs   desk_legs: at both x ends of the desk, --leg-size 28 (x) x 57 (y) cm, centred in y,
-         solid boxes from the floor to the desk top (user, 2026-11-19).
+  legs   desk_legs (user, 2026-11-20): at both x ends a 2 cm thick wall over the whole desk
+         width (real: two 2 x 28 cm plates, 2.8 cm from the -y edge and 2 mm from the +y edge,
+         to be closed by walls for the TurtleBot's LiDAR), open under the desk in between;
+         floor -> desk top (--leg-plate / --leg-gap / --leg-beam;
+         the old solid 28 x 57 blocks: --leg-size 0.28,0.57).
   mount  robot_mount: two support plates beside the base (y = +-mount_y, 0.5 cm thick),
-         from the desk front end 3 cm out (+x), 3 cm over and 11 cm under the desk top.
+         from --mount-x (6 cm in front of the base axis, = the desk front end by default)
+         3 cm out (+x), 3 cm over and 11 cm under the desk top. Fixed to the robot (base
+         frame): they turn / move with it, not with the desk.
   bot    a low open box BEHIND a TurtleBot3 Burger (user, 2026-11-19): box inner floor
          --box-floor (0.026) over the floor, walls --box-depth (0.004) high, inner --box-inner,
          the ArUco marker (ID 0) at the box floor centre, box x = marker +x; a support block
@@ -24,20 +29,23 @@ Layout (base frame, robot on a 29.9 cm desk, base 7 mm above the desk top):
          away from the box; its camera sticks out of the front: --bot-cam out,width,centre
          height (0.06, 0.07, 0.14), --bot-cam-h tall. Placed by the box centre (--bot
          cx,cy,yaw: from the marker in tray_handle_pick).
-  shelf  SISYPHUS robot shelf on the floor (--with-shelf), dimensions from its build guide
-         (2026-11-13). Shelf frame: origin = base-plate FRONT-LEFT corner on the floor, +X to
+  shelf  SISYPHUS robot shelf on the floor (--with-shelf), dimensions from the 3D model of
+         its build guide (artifact '로봇선반 제작 가이드', info 2026-11-19; part boxes
+         measured from the model, checked 2026-11-20). Shelf frame: origin = base-plate FRONT-LEFT corner on the floor, +X to
          the right seen from the front, +Y back toward the rack, +Z up. Placed by --shelf
          x,y,yaw (base frame, yaw = shelf +X in base, deg CCW) or measured with
          --shelf-points x1,y1,x2,y2: finger tip on the front-left corner of the base plate,
          then on any point further right along its front edge (xy only).
          Moving parts: --shelf-x (X axis, mast centre from the plate centre, -0.097..+0.097),
-         --fork-top (fork plate top over the floor; a cell support top - 8 mm = 0.254 /
-         0.419 / 0.584 for L1..L3), --fork-y (fork out toward the rack, 0..0.16).
+         --fork-top (D11 fork plate top over the floor; a cell support top - 8 mm = 0.254 /
+         0.419 / 0.584 for L1..L3; the model reaches 0.263..0.616 only, see FORK_TOP),
+         --fork-y (fork out toward the rack, 0..0.16).
+         Fork stack (D07 carriage, D08 deck + Y motor, ball rails, D24, load cell, D11
+         100 x 140 x 13.8) hangs 113 mm below the fork top.
          The tray on the fork is NOT added unless --with-tray (it would block the grasp);
-         its centre / pin are printed. tray_handle_pick then needs  --table-z <fork top z>
-         (printed).
-         Boxes are outlines (purchased parts / carriage / deck heights are estimates) and
-         grown by --shelf-margin.
+         its centre / handle are printed. tray_handle_pick then needs  --table-z <fork top
+         z> (printed).
+         Boxes are bounding boxes of the model parts, grown by --shelf-margin.
 
 Replaces the 1.5 x 1.5 m 'calibration_table' (it blocks everything below the desk) with the
 real desk. NOTE: click_move / look_toward / red_cube_hover / handeye add that big table back
@@ -52,6 +60,7 @@ when they start -> run this again afterwards.
   ros2 run mycobot_tasks place_scene --with-shelf --shelf-points 0.12,-0.36,0.40,-0.37 \
       --shelf-x -0.097 --fork-top 0.254 --print              # shelf: check the numbers first
   ros2 run mycobot_tasks place_scene --with-shelf --shelf 0.12,-0.36,-2 --fork-top 0.254
+  ros2 run mycobot_tasks place_scene --layout                # placement from ~/.ros/layout.yaml
   ros2 run mycobot_tasks place_scene --clear                 # remove everything added here
   ros2 run mycobot_tasks place_scene --print                 # numbers only, no ROS
 """
@@ -69,9 +78,12 @@ NAMES = ('desk', 'floor', 'desk_legs', 'robot_mount', 'turtlebot', 'bot_box') + 
 LEVELS = (262.0, 427.0, 592.0)                  # cell support tops over the floor (L1..L3)
 CELLS_X = ((106.0, 288.0), (300.0, 482.0))      # cell inner x; left L1 = hand-over cell
 X_TRAVEL = 97.0                                 # X axis: mast centre 300 +- 97
-FORK_TOP = (231.0, 584.0)                       # fork top range (carriage 118..471 over the
-                                                # moving plate, deck bottom ~ carriage bottom)
-TRAY = dict(len=150.0, wid=100.0, h=56.0, pin_out=12.0, pin_w=15.0, pin_z=(6.0, 46.0))
+CARRIAGE = (118.0, 471.0)                       # D07 bottom over the moving plate top (B4)
+FORK_OVER_CARRIAGE = 79.0                       # D11 top - D07 bottom (guide 3D model)
+FORK_TOP = tuple(66.0 + c + FORK_OVER_CARRIAGE for c in CARRIAGE)   # 263..616 over the floor
+# shelf tray (guide part E): D13 frame 150 x 100 x 6, PP body 50, D31 handle arch in the
+# middle (30 along X, 91 along Y) up to 76 over the tray bottom
+TRAY = dict(len=150.0, wid=100.0, h=56.0, handle_x=30.0, handle_y=91.0, handle_z=(10.0, 76.0))
 
 
 
@@ -118,26 +130,53 @@ def shelf_boxes(a):
     b = {
         'shelf_base': [
             (0, 600, 0, 450, 0, tb),                     # base plate 600 x 450
-            (10, 150, 15, 135, tb, tb + 60),             # D20 electronics board (height est.)
-            (517, 593, 20, 80, tb, tb + 70),             # D21 E-stop box (height est.)
+            (10, 150, 15, 135, tb, 38),                  # D20 electronics board + parts
+            (517, 593, 20, 80, tb, 62),                  # D21 E-stop box
+            (540, 570, 35, 65, 62, 80),                  # C1 E-stop button
+            (175, 425, 112, 140, tb, 31),                # D15 X encoder bar
+            (125, 145, 140, 154, tb, 28),                # D14 + X home switch
+            (65, 115, 185, 265, tb, 54),                 # D01 X motor bracket
+            (69, 111, 204, 246, 54, 102),                # X motor
+            (482, 534, 205, 245, tb, 53),                # D02 idler holder
+            (82, 519, 205, 245, 36, 54),                 # GT2 belt, pulley, idler
+            (125, 475, 154, 196, tb, pt - 12),           # SK12 + Ø12 rods + SC12UU (front)
+            (125, 475, 254, 296, tb, pt - 12),           # (back)
+            (150, 180, 425, 475, tb, 22),                # D18 rack brackets
+            (440, 470, 425, 475, tb, 22),
         ],
         'shelf_xaxis': [
-            (120, 480, 150, 300, tb, pt - 12),           # SK12 / Ø12 rods / SC12UU
             (cx - 70, cx + 70, 145, 305, pt - 12, pt),   # moving plate 140 x 160
-            (60, 120, 180, 270, tb, tb + 90),            # D01 + X motor (est.)
-            (480, 520, 195, 255, tb, tb + 50),           # D02 idler (est.)
+            (cx - 40, cx + 67, 104, 145, 21, 68),        # D30AB / D30C + X sensors (front)
+            (cx - 20, cx + 20, 206, 228, 36, pt - 12),   # D03 belt clamp
         ],
         'shelf_mast': [
             (cx - 75, cx + 75, 176, 188, pt, pt + 674),  # front panel 150 x 674
             (cx - 75, cx - 63, 188, 228, pt, pt + 674),  # ribs 40 deep
             (cx + 63, cx + 75, 188, 228, pt, pt + 674),
-            (cx - 45, cx + 45, 188, 234, pt, pt + 670),  # Z rods, T8, motor, D06
-            (cx - 35, cx + 35, 188, 252, pt, pt + 52),   # D05 Z motor base (screws to y 246)
+            (cx - 70, cx - 10, 145, 176, pt, pt + 40),   # D04 mast feet (front)
+            (cx + 10, cx + 70, 145, 176, pt, pt + 40),
+            (cx - 40, cx + 40, 188, 252, pt, pt + 54),   # D05 Z motor base + motor
+            (cx - 61, cx + 61, 188, 221, 150, 650),      # SK8 + Ø8 rods (Z5, 500)
+            (cx - 11, cx + 11, 201, 223, 122, 735),      # T8 lead screw
+            (cx - 30, cx + 30, 188, 226, 705, 730),      # D06 608ZZ top housing
+            (cx - 18, cx - 5, 188, 215, 150, 186),       # D22 Z bottom stopper
+            (cx - 52, cx - 32, 188, 204, 190, 204),      # Z home switch
+            (cx + 62, cx + 84, 228, 249, 200, 610),      # D15 Z encoder bar (right rib back)
+            (cx + 75, cx + 95, 193, 223, 199, 516),      # D23 cable clips
+            (cx + 28, cx + 52, 170, 176, 698, 722),      # MPU6050 (panel front)
         ],
-        'shelf_fork': [
-            (cx - 60, cx + 60, 188, 240, F - 47, F + 43),  # Z carriage D07 (est.)
-            (cx - 50, cx + 50, 240, 450, F - 47, F - 6),   # Y deck D08 100 x 210 x 41
-            (tx - 50, tx + 50, ty - 60, ty + 60, F - 6, F),  # fork plate under the tray
+        'shelf_fork': [                                  # moves with Z (F)
+            (cx - 60, cx + 60, 199, 238, F - 79, F + 10),  # D07 Z carriage
+            (cx - 60, cx + 60, 238, 257, F - 79, F - 71),  # D07 front flange (deck bolts)
+            (cx + 54, cx + 92, 227, 287, F - 67, F + 6),   # D30Z + Z sensors
+            (cx - 50, cx + 50, 227, 437, F - 75, F - 63),  # D08 Y deck plate (210 long)
+            (cx - 50, cx - 24, 227, 437, F - 75, F - 32),  # D08 walls + outer ball rails
+            (cx + 24, cx + 50, 227, 437, F - 75, F - 32),
+            (cx - 38, cx + 26, 383, 437, F - 113, F - 75),  # D09 + Y motor under the deck
+            # moves with the fork (--fork-y)
+            (cx - 36, cx + 36, 243 + ext, 427 + ext, F - 76, F - 27),  # D24 + inner rails
+            (cx - 7, cx + 7, 302 + ext, 382 + ext, F - 27, F - 14),    # A1 load cell
+            (cx - 50, cx + 50, 287 + ext, 427 + ext, F - 14, F),       # D11 fork 100x140x13.8
         ],
         'shelf_rack': [
             (94, 494, 450, 610, 0, 12),                  # bottom
@@ -146,25 +185,32 @@ def shelf_boxes(a):
             (288, 300, 450, 610, 12, 772),               # divider
             (94, 106, 450, 610, 330, 772),               # left panel (L1 left open below 330)
             (94, 494, 610, 614.5, 0, 784),               # back panel
-            (94, 106, 450, 462, 12, 330),                # IR posts (front, back; size est.)
-            (94, 106, 596, 608, 12, 330),
-            (94, 134, 450, 462, 12, 20),                 # post feet (screw 32.5 in)
-            (94, 134, 596, 608, 12, 20),
+            (94, 112, 450, 462, 12, 338),                # D25 IR beam posts (front, back)
+            (94, 112, 590, 602, 12, 338),
+            (94, 131, 450, 462, 12, 20),                 # post feet
+            (94, 131, 590, 602, 12, 20),
         ],
     }
-    for x0, x1 in CELLS_X:                               # support rails (pin side 37, far 25)
-        for lv in LEVELS:
-            b['shelf_rack'] += [(x0, x0 + 37, 450, 610, lv - 32, lv),   # height est.
-                                (x1 - 25, x1, 450, 610, lv - 24, lv)]
+    D = 605.5                                            # D12 rails: rack front .. 155.5 deep
+    for ci, (x0, x1) in enumerate(CELLS_X):              # pin side ledge 37, far side 26
+        for li, lv in enumerate(LEVELS):
+            if ci == 0 and li == 0:                      # L1 left = hand-over cell (D12hand)
+                b['shelf_rack'] += [(x0, x0 + 37, 450, D, lv - 10, lv),
+                                    (x0, x0 + 6, 450, D, lv - 30, 338)]
+            else:
+                b['shelf_rack'] += [(x0, x0 + 37, 450, D, lv - 10, lv),     # ledge
+                                    (x0, x0 + 6, 450, D, lv - 30, lv + 8)]  # wall plate
+            b['shelf_rack'] += [(x1 - 26, x1, 450, D, lv - 10, lv),
+                                (x1 - 6, x1, 450, D, lv - 30, lv + 8),
+                                (x1 - 26, x1 - 6, 579, 600, lv, lv + 20)]   # cell switch
     T = TRAY
+    hx, hy, hz = T['handle_x'] / 2, T['handle_y'] / 2, T['handle_z']
     tray = [(tx - T['len'] / 2, tx + T['len'] / 2, ty - T['wid'] / 2, ty + T['wid'] / 2,
              F, F + T['h']),
-            (tx - T['len'] / 2 - T['pin_out'], tx - T['len'] / 2,
-             ty - T['pin_w'] / 2, ty + T['pin_w'] / 2, F + T['pin_z'][0], F + T['pin_z'][1])]
+            (tx - hx, tx + hx, ty - hy, ty + hy, F + hz[0], F + hz[1])]   # D31 handle arch
     if a.with_tray:
         b['shelf_tray'] = tray
-    info = dict(F=F, tray=(tx, ty), pin=(tx - T['len'] / 2 - T['pin_out'] / 2, ty),
-                pin_top=F + T['pin_z'][1], cx=cx)
+    info = dict(F=F, tray=(tx, ty), handle_top=F + hz[1], cx=cx)
     return b, info
 
 
@@ -186,7 +232,7 @@ def place_shelf(a, floor_z):
                         (z1 - z0 + 2 * m) / 1000], yaw)
                       for x0, x1, y0, y1, z0, z1 in bl]
     info = dict(fork_top=floor_z + si['F'] / 1000, tray_xy=to_base(*si['tray']),
-                pin_xy=to_base(*si['pin']), pin_top=floor_z + si['pin_top'] / 1000,
+                handle_top=floor_z + si['handle_top'] / 1000,
                 tray_yaw_deg=yaw_deg, shelf=si)
     return objs, info
 
@@ -206,19 +252,43 @@ def build(a):
                   [x1 - x0, y1 - y0, t_desk], -th)],
         'floor': [([0.0, 0.0, floor_z - t_desk / 2], [3.0, 3.0, t_desk], 0.0)],
     }
-    if a.leg_size[0] > 0:
-        # legs at both x ends of the desk (desk frame), centred in y, floor -> desk top
+    if a.leg_size is not None and a.leg_size[0] > 0:
+        # old model: one solid block at each x end, centred in y, floor -> desk top
         lx, ly = a.leg_size
         yc = a.edge_y + a.desk_width / 2
         objs['desk_legs'] = [
             (rot(-th, xc, yc) + [(floor_z + desk_top) / 2],
              [lx + 2 * m, ly + 2 * m, desk_top - floor_z], -th)
             for xc in (a.desk_x[0] + lx / 2, a.desk_x[1] - lx / 2)]
+    elif a.leg_plate[0] > 0:
+        # legs (user 2026-11-20): at each x end two plates --leg-plate (x thick, y wide), side
+        # by side in y between --leg-gap (from the -y / +y desk edges), and a crossbar
+        # --leg-beam (x, y) in the middle of the desk; floor -> desk top, grown by --leg-margin
+        t, w = a.leg_plate
+        lm = a.leg_margin
+        y_lo = a.edge_y + a.leg_gap[0]
+        y_hi = a.edge_y + a.desk_width - a.leg_gap[1]
+        zc, h = (floor_z + desk_top) / 2, desk_top - floor_z
+        legs = []
+        span = y_hi - y_lo
+        if w <= 0 or 2 * w >= span:               # one wall over the whole width
+            plates = [((y_lo + y_hi) / 2, span)]
+        else:                                     # two plates with a gap between them
+            plates = [(y_lo + w / 2, w), (y_hi - w / 2, w)]
+        for xc in (a.desk_x[0] + t / 2, a.desk_x[1] - t / 2):
+            for yc, wy in plates:
+                legs.append((rot(-th, xc, yc) + [zc], [t + 2 * lm, wy + 2 * lm, h], -th))
+        if a.leg_beam[0] > 0:
+            bx, by = a.leg_beam
+            legs.append((rot(-th, sum(a.desk_x) / 2, (y_lo + y_hi) / 2) + [zc],
+                         [bx + 2 * lm, by + 2 * lm, h], -th))
+        objs['desk_legs'] = legs
     if a.mount_out > 0:
-        # robot support plates beside the base (base frame: they move with the robot),
-        # from the desk front end --mount-out further in +x, --mount-up over / --mount-down
-        # under the desk top, --mount-t thick along y, centres at y = +-mount_y
-        x_front = rot(-th, a.desk_x[1], 0.0)[0]
+        # robot support plates beside the base (base frame: they move / turn with the
+        # robot, not with the desk), from --mount-x --mount-out further in +x, --mount-up
+        # over / --mount-down under the desk top, --mount-t thick along y, centres at
+        # y = +-mount_y
+        x_front = a.mount_x
         mm = a.mount_margin
         z0, z1 = desk_top - a.mount_down, desk_top + a.mount_up
         x0m, x1m = x_front - a.mount_in, x_front + a.mount_out
@@ -277,6 +347,40 @@ def build(a):
     return objs, info
 
 
+def _corners(c, s, y):
+    cy, sy = math.cos(y), math.sin(y)
+    return [(c[0] + cy * u - sy * v, c[1] + sy * u + cy * v)
+            for u, v in ((s[0] / 2, s[1] / 2), (-s[0] / 2, s[1] / 2),
+                         (-s[0] / 2, -s[1] / 2), (s[0] / 2, -s[1] / 2))]
+
+
+def _overlap(p, q):
+    """Two scene boxes (centre, size, yaw) intersect (z interval + separating axes in xy)."""
+    (c1, s1, y1), (c2, s2, y2) = p, q
+    if c1[2] + s1[2] / 2 <= c2[2] - s2[2] / 2 or c2[2] + s2[2] / 2 <= c1[2] - s1[2] / 2:
+        return False
+    A, B = _corners(c1, s1, y1), _corners(c2, s2, y2)
+    for P in (A, B):
+        for i in range(4):
+            ex, ey = P[(i + 1) % 4][0] - P[i][0], P[(i + 1) % 4][1] - P[i][1]
+            a = [-ey * x + ex * y for x, y in A]
+            b = [-ey * x + ex * y for x, y in B]
+            if max(a) <= min(b) or max(b) <= min(a):
+                return False
+    return True
+
+
+def box_hits(objs, names, others):
+    """-> set of the 'others' objects one of the 'names' objects intersects."""
+    out = set()
+    for n in names:
+        for p in objs.get(n, []):
+            for o in others:
+                if o not in out and any(_overlap(p, q) for q in objs.get(o, [])):
+                    out.add(o)
+    return out
+
+
 def report(objs, info, a):
     print(f"robot yaw {a.robot_yaw:+.1f} deg vs the desk, desk (desk frame) "
           f"x {a.desk_x[0]:+.2f}..{a.desk_x[1]:+.2f}, "
@@ -303,31 +407,22 @@ def report(objs, info, a):
         print(f"fork top z {s['fork_top']:+.3f}  ->  tray_handle_pick --table-z "
               f"{s['fork_top']:.3f}")
         tx, ty = s['tray_xy']
-        px, py = s['pin_xy']
-        print(f"tray centre ({tx:+.3f}, {ty:+.3f}), {math.hypot(tx, ty) * 100:.0f} cm from the "
-              f"base axis; tray +x yaw {s['tray_yaw_deg']:+.1f} deg (pin on -x)")
-        print(f"pin ({px:+.3f}, {py:+.3f}), top z {s['pin_top']:+.3f}, "
-              f"{math.hypot(px, py) * 100:.0f} cm from the base axis"
-              + ('  <-- beyond ~30 cm: top-down grasp unlikely' if math.hypot(px, py) > 0.30
-                 else ''))
+        d = math.hypot(tx, ty)
+        print(f"tray (handle) centre ({tx:+.3f}, {ty:+.3f}), {d * 100:.0f} cm from the "
+              f"base axis; tray +x yaw {s['tray_yaw_deg']:+.1f} deg, handle top z "
+              f"{s['handle_top']:+.3f}"
+              + ('  <-- beyond ~30 cm: top-down grasp unlikely' if d > 0.30 else ''))
         if abs(a.shelf_x) > X_TRAVEL / 1000 + 1e-9:
             print(f'WARNING: --shelf-x outside the X travel +-{X_TRAVEL:.0f} mm')
         if not FORK_TOP[0] <= a.fork_top * 1000 <= FORK_TOP[1]:
             print(f'WARNING: --fork-top outside ~{FORK_TOP[0]:.0f}..{FORK_TOP[1]:.0f} mm')
         if not 0 <= a.fork_y <= 0.16:
             print('WARNING: --fork-y outside 0..0.16')
-        th = math.radians(a.robot_yaw)          # shelf footprint vs the desk (desk frame)
-        ox, oy, sy = a.shelf
-        c, s_ = math.cos(math.radians(sy)), math.sin(math.radians(sy))
-        hit = 0
-        for i in range(13):
-            for j in range(13):
-                u, v = 0.6 * i / 12, 0.615 * j / 12
-                px_, py_ = rot(th, ox + c * u - s_ * v, oy + s_ * u + c * v)
-                hit += (a.desk_x[0] < px_ < a.desk_x[1]
-                        and a.edge_y < py_ < a.edge_y + a.desk_width)
-        if hit:
-            print('WARNING: the shelf footprint overlaps the desk -> check --shelf / --shelf-points')
+        hits = box_hits(objs, [n for n in objs if n.startswith('shelf')],
+                        ['desk', 'desk_legs', 'robot_mount', 'turtlebot', 'bot_box'])
+        if hits:
+            print('WARNING: the shelf runs into ' + ', '.join(sorted(hits))
+                  + ' -> move it (--shelf / layout)')
         if s['fork_top'] + a.table_margin_tray > a.table_z - 0.02:
             print('WARNING: tray_handle_pick adds a 1.5 x 1.5 m "calibration_table" at '
                   '--table-z; with '
@@ -337,6 +432,31 @@ def report(objs, info, a):
         for c, s, y in prims:
             print(f'  {n:9s} centre ({c[0]:+.3f},{c[1]:+.3f},{c[2]:+.3f}) '
                   f'size ({s[0]:.3f},{s[1]:.3f},{s[2]:.3f}) yaw {math.degrees(y):.0f}')
+
+
+# RViz colours (MotionPlanning > Scene Geometry), r, g, b, a
+COLORS = {
+    'desk': (0.62, 0.45, 0.28, 1.0),          # wood brown
+    'desk_legs': (0.42, 0.29, 0.17, 1.0),     # darker brown
+    'floor': (0.55, 0.55, 0.55, 0.35),        # light grey, see-through
+    'robot_mount': (0.25, 0.25, 0.25, 1.0),   # dark grey
+    'turtlebot': (0.15, 0.35, 0.95, 1.0),     # blue
+    'bot_box': (0.55, 0.75, 1.0, 1.0),        # light blue
+    'shelf_base': (0.25, 0.70, 0.35, 1.0),    # shelf: greens
+    'shelf_xaxis': (0.10, 0.50, 0.20, 1.0),
+    'shelf_mast': (0.40, 0.80, 0.45, 1.0),
+    'shelf_rack': (0.20, 0.60, 0.30, 0.85),
+    'shelf_fork': (1.0, 0.55, 0.10, 1.0),     # Z carriage / Y deck / D11: orange
+    'shelf_tray': (1.0, 0.90, 0.15, 1.0),     # tray on D11: yellow
+}
+
+
+def object_colors(names):
+    """moveit_msgs ObjectColor list for these object ids (the ones in COLORS)."""
+    from moveit_msgs.msg import ObjectColor
+    from std_msgs.msg import ColorRGBA
+    return [ObjectColor(id=n, color=ColorRGBA(r=c[0], g=c[1], b=c[2], a=c[3]))
+            for n in names for c in [COLORS.get(n)] if c is not None]
 
 
 def collision_objects(objs, base='base'):
@@ -393,6 +513,8 @@ def apply(objs, clear, base='base', keep_table=False, wait=10.0):
         def send(batch):
             req = ApplyPlanningScene.Request(scene=PlanningScene(is_diff=True))
             req.scene.world.collision_objects = batch
+            req.scene.object_colors = object_colors(
+                [co.id for co in batch if co.operation == CollisionObject.ADD])
             res = _wait(cli.call_async(req), 5.0)
             return res is not None and res.success
         nrm = len(NAMES) + (0 if keep_table else 1)
@@ -409,7 +531,8 @@ def apply(objs, clear, base='base', keep_table=False, wait=10.0):
 
 
 LIST_OPTS = ('--shelf', '--shelf-points', '--edge-points', '--bot', '--desk-x',
-             '--box-inner', '--bot-body', '--leg-size', '--bot-cam')
+             '--box-inner', '--bot-body', '--leg-size', '--bot-cam', '--leg-plate',
+             '--leg-gap', '--leg-beam')
 
 
 def join_negative(argv):
@@ -451,15 +574,30 @@ def make_parser():
     a.add_argument('--edge-points', type=floats, default=None,
                    help='x1,y1,x2,y2: two finger-tip points on the drop-off edge (base, m) '
                         '-> sets --robot-yaw and --edge-y')
-    a.add_argument('--leg-size', type=floats, default=[0.28, 0.57],
-                   help='desk legs at both x ends: size along x (desk long side), y [m]; '
-                        'solid boxes floor -> desk top (0,0 = none)')
+    a.add_argument('--leg-size', type=floats, default=None,
+                   help='old leg model: one solid block x,y [m] at each x end (e.g. 0.28,0.57); '
+                        'given = used instead of the plates below')
+    a.add_argument('--leg-plate', type=floats, default=[0.02, 0.0],
+                   help='desk legs: at each x end x thick, y wide [m]; y 0 = one wall over the '
+                        'whole width (the real 2 x 28 cm plates + gaps, closed by walls for the '
+                        "TurtleBot's LiDAR; two plates: e.g. 0.02,0.28 --leg-gap 0.028,0.002); "
+                        '0,0 = no legs')
+    a.add_argument('--leg-gap', type=floats, default=[0.0, 0.0],
+                   help='legs: gap from the -y (right) and +y (left) desk edges [m] (real: '
+                        '0.028, 0.002)')
+    a.add_argument('--leg-beam', type=floats, default=[0.0, 0.0],
+                   help='legs: crossbar in the middle of the desk, x,y [m] (0,0 = none: the '
+                        'desk is open between its ends, user 2026-11-20)')
+    a.add_argument('--leg-margin', type=float, default=0.005, help='legs grown by this [m]')
     a.add_argument('--mount-y', type=float, default=0.074,
                    help='robot support plates: centre |y| from the base axis [m] (user 2026-11-20: 14.8 cm apart; the base '
                         'is 11.7 cm wide: plates closer than ~6.2 cm touch it in the scene)')
+    a.add_argument('--mount-x', type=float, default=0.06,
+                   help='robot support plates start this far in front of the base axis (+x, '
+                        'base frame) [m]: fixed to the robot (default = the desk front end)')
     a.add_argument('--mount-t', type=float, default=0.005, help='support plate thickness (y) [m]')
     a.add_argument('--mount-out', type=float, default=0.03,
-                   help='support sticks out this far past the desk front end (+x) [m] '
+                   help='support sticks out this far past --mount-x (+x) [m] '
                         '(0 = no supports)')
     a.add_argument('--mount-in', type=float, default=0.0,
                    help='... and reaches this far back over the desk (-x) [m]')
@@ -517,9 +655,9 @@ def make_parser():
                         'height 0.254/0.419/0.584)')
     s.add_argument('--fork-y', type=float, default=0.0,
                    help='fork moved out toward the rack [m], 0..0.16')
-    s.add_argument('--tray-y', type=float, default=0.37,
+    s.add_argument('--tray-y', type=float, default=0.357,
                    help='tray centre (shelf Y from the front edge) with the fork in [m] '
-                        '(ESTIMATE, measure it)')
+                        '(default = D11 centre in the guide model; measure it)')
     s.add_argument('--tray-dx', type=float, default=0.0,
                    help='tray centre - mast centre along the shelf X [m] (measure it)')
     s.add_argument('--with-tray', action='store_true',
@@ -531,6 +669,10 @@ def make_parser():
                    help='shelf boxes grown by this on every side [m]')
     s.add_argument('--table-margin-tray', type=float, default=0.012,
                    help="tray_handle_pick's --table-margin (only for the warning)")
+    a.add_argument('--layout', nargs='?', const=LAYOUT, default=None,
+                   help='take desk / TurtleBot / shelf placement and the shelf axes from '
+                        f'this layout file (default {LAYOUT}, set by `ros2 run mycobot_tasks '
+                        'layout` in RViz); options given here override it')
     a.add_argument('--clear', action='store_true', help='remove the objects of this scene')
     a.add_argument('--print', action='store_true', help='print the numbers only, no ROS')
     a.add_argument('--base-frame', default='base')
@@ -539,10 +681,37 @@ def make_parser():
     return a
 
 
+LAYOUT = '~/.ros/layout.yaml'
+# keys of the layout file (ros2 run mycobot_tasks layout) = place_scene option dests
+LAYOUT_KEYS = ('desk_x', 'edge_y', 'robot_yaw', 'bot', 'with_bot', 'shelf', 'with_shelf',
+               'shelf_x', 'fork_top', 'fork_y')
+
+
+def load_layout(path=LAYOUT):
+    """The layout file -> {option dest: value} (only LAYOUT_KEYS; {} when missing)."""
+    import os
+    import yaml
+    try:
+        with open(os.path.expanduser(path)) as f:
+            d = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return {k: d[k] for k in LAYOUT_KEYS if k in d and d[k] is not None}
+
+
 def parse(argv):
     """place_scene options (list of strings) -> args with --edge-points / --shelf-points
-    resolved."""
-    args, _ = make_parser().parse_known_args(join_negative(list(argv)))
+    resolved. --layout: the layout file gives the defaults (options given here win)."""
+    p = make_parser()
+    argv = join_negative(list(argv))
+    pre, _ = p.parse_known_args(argv)
+    if pre.layout:
+        d = load_layout(pre.layout)
+        if not d:
+            print(f'WARNING: --layout {pre.layout}: no layout there (ros2 run mycobot_tasks '
+                  'layout), defaults used')
+        p.set_defaults(**d)
+    args, _ = p.parse_known_args(argv)
 
     if args.edge_points:
         args.robot_yaw, args.edge_y = from_edge_points(args)
