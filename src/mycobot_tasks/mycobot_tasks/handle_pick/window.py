@@ -19,6 +19,8 @@ def view(app):
             ord('k'): ('TurtleBot -> shelf', app.act_bot_to_shelf),
             ord('n'): ('D11 -> desk -> TurtleBot', app.act_d11_to_bot),
             ord('j'): ('TurtleBot -> desk -> D11', app.act_bot_to_d11),
+            ord('e'): ('desk -> TurtleBot', app.act_desk_to_bot),
+            ord('r'): ('TurtleBot -> desk', app.act_bot_to_desk),
             ord('d'): ('detect (any height)', app.act_detect),
             ord('s'): ('search pose', app.act_search),
             ord('b'): ('put back', app.act_place)}

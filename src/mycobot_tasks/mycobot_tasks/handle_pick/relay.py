@@ -50,11 +50,41 @@ def seg(a, b, step=0.005):
     return [a + (b - a) * t for t in np.linspace(0, 1, n + 1)[1:]]
 
 
+class PlanTimeout(Stop):
+    """Planning took longer than --relay-plan-timeout (not retried with less clearance)."""
+
+
 class RelayFail(Exception):
     pass
 
 
 class RelayMixin:
+    def _check(self):
+        """The stop key, and while planning the --relay-plan-timeout deadline."""
+        super()._check()
+        dl = getattr(self, '_rl_deadline', None)
+        if dl is not None and time.monotonic() > dl:
+            raise PlanTimeout(f'relay planning took longer than --relay-plan-timeout '
+                              f'{self.args.relay_plan_timeout:.0f} s: given up')
+
+    def _plan_deadline(self):
+        """Context: the planning deadline (the outermost caller sets it)."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def cm():
+            owner = getattr(self, '_rl_deadline', None) is None
+            if owner:
+                t = self.args.relay_plan_timeout
+                self._rl_deadline = time.monotonic() + t if t > 0 else None
+                self._rl_box_dead = set()
+            try:
+                yield
+            finally:
+                if owner:
+                    self._rl_deadline = None
+        return cm()
+
     # ------------------------------------------------------------------ setup
     def relay_setup(self):
         if getattr(self, '_rl_arm', None) is not None:
@@ -260,6 +290,27 @@ class RelayMixin:
                 return q
         return None
 
+    def _ik_many(self, p, yaw, flip, k=3, n=60, apart=20.0):
+        """Up to k different grasp poses as _ik_any (joints >= apart deg apart from each
+        other), the one nearest the joint middle first."""
+        b = math.atan2(p[1], p[0]) + (math.pi if flip else 0.0)
+        out = []
+        for _ in range(n):
+            self._check()
+            q0 = self._rl_rng.uniform(LO, HI)
+            q0[0] = math.remainder(b + self._rl_rng.normal(0, 0.3), 2 * math.pi)
+            q = self._ik_v(p, yaw, q0)
+            if q is None or abs(math.remainder(q[0] - b, 2 * math.pi)) >= math.radians(60):
+                continue
+            if any(math.degrees(float(np.max(np.abs(q - o)))) < apart for o in out):
+                continue
+            if self._contacts(q, held=False):
+                continue
+            out.append(q)
+            if len(out) >= k:
+                break
+        return sorted(out, key=lambda q: float(np.sum(np.abs(q))))
+
     # ------------------------------------------------------------------ collisions
     def _contacts(self, q, held=True, touch=(), pad=None, at_tray=None, grip=None):
         """Colliding pairs at q (gripper --hold-grip with the tray / --grasp-open without).
@@ -335,11 +386,13 @@ class RelayMixin:
             if qn is None or math.degrees(float(np.max(np.abs(qn - q)))) > self.args.max_step_jump:
                 raise RelayFail(f'{label}: turn stuck at {math.degrees(y):.0f} deg (J6 '
                                 f'{math.degrees(q[5]):.0f})')
+            # every step (3 deg) checked: a big turn near the arm base sweeps the tray
+            # corners over it although both ends are clear
+            c = self._contacts(qn)
+            if c:
+                raise RelayFail(f'{label}: collision at {math.degrees(y):.0f} deg {c[:2]}')
             out.append(qn)
             q = qn
-        c = self._contacts(q)
-        if c:
-            raise RelayFail(f'{label}: collision after the turn {c[:2]}')
         return out
 
     def _straighten(self, q, p, yaw, label):
@@ -358,12 +411,14 @@ class RelayMixin:
             raise RelayFail(f'{label}: collision when straightened')
         return out + [qn]
 
-    def _grid(self, S, qS, yaw, goals, label):
+    def _grid(self, S, qS, yaw, goals, label, cap=None):
         """A* over the --relay-carry-z plane (2 cm grid, tool tilted <= --relay-tilt, tray
         held) from S toward the goals (heuristic: straight distance to the nearest goal not
         reached yet). A generator: yields (goal, joint path) as each goal is reached, so the
-        caller stops as soon as one works out; ends when none is left / nothing reachable."""
+        caller stops as soon as one works out; ends when none is left / nothing reachable /
+        cap points settled (self._rl_grid_capped = True)."""
         a, z = self.args, self.args.relay_carry_z
+        self._rl_grid_capped = False
         x0, x1, y0, y1 = a.relay_grid
         xs = np.round(np.arange(x0, x1 + 1e-9, 0.02), 3)
         ys = np.round(np.arange(y0, y1 + 1e-9, 0.02), 3)
@@ -382,6 +437,10 @@ class RelayMixin:
             if u in done:
                 continue
             done.add(u)
+            if cap and len(done) > cap and u not in left:
+                print(f'  relay {label}: grid capped at {cap} points (quick pass), next', flush=True)
+                self._rl_grid_capped = True
+                return
             d = best[u]
             if u in left:
                 left.discard(u)
@@ -478,80 +537,83 @@ class RelayMixin:
         for flip in (True, False):
             for y0 in self._yaws(d11['lr']):
                 tag = f"D11 {'reversed' if flip else 'normal'} arm, tool yaw {math.degrees(y0):.0f}"
-                qd = self._ik_any(pg, y0, flip)
-                if qd is None:
+                qds = self._ik_many(pg, y0, flip, self.args.relay_grasp_tries)
+                if not qds:
                     why.append(f'{tag}: no grasp pose')
                     continue
-                try:
-                    up = self._chain(qd, seg(pg, pa), y0, held=False, label=f'{tag}: approach')
-                    approach = up[::-1] + [qd]          # from over the handle (start point) down
-                    lift = self._chain(qd, seg(pg, pa), y0, surfaces=[(surf, D11_ON)],
-                                       label=f'{tag}: lift')
-                except RelayFail as e:
-                    why.append(str(e))
-                    continue
-                for side, pu in pulls:
-                    p1 = np.array([pa[0] + perp[0] * side, pa[1] + perp[1] * side, pa[2]])
-                    P = np.array([pu[0], pu[1], zc])
+                # several grasp poses (IK branches): one whose pull out hits the rack /
+                # itself is not the only way
+                for gi, qd in enumerate(qds):
                     try:
-                        pull = self._chain(lift[-1], seg(pa, p1) + seg(p1, [pu[0], pu[1], pa[2]]) +
-                                           seg([pu[0], pu[1], pa[2]], P), y0, label=f'{tag}: pull out')
+                        up = self._chain(qd, seg(pg, pa), y0, held=False, label=f'{tag}: approach')
+                        approach = up[::-1] + [qd]          # from over the handle (start point) down
+                        lift = self._chain(qd, seg(pg, pa), y0, surfaces=[(surf, D11_ON)],
+                                           label=f'{tag}: lift')
                     except RelayFail as e:
                         why.append(str(e))
                         continue
-                    for turn in (90.0, -90.0):
-                        yc = y0 + math.radians(turn)
+                    for side, pu in pulls:
+                        p1 = np.array([pa[0] + perp[0] * side, pa[1] + perp[1] * side, pa[2]])
+                        P = np.array([pu[0], pu[1], zc])
                         try:
-                            tq = self._turn(pull[-1], P, y0, yc, False, f'{tag}: turn {turn:+.0f}')
+                            pull = self._chain(lift[-1], seg(pa, p1) + seg(p1, [pu[0], pu[1], pa[2]]) +
+                                               seg([pu[0], pu[1], pa[2]], P), y0, label=f'{tag}: pull out')
                         except RelayFail as e:
                             why.append(str(e))
                             continue
-                        spots = self.desk_spots(yc)
-                        if not spots:
-                            why.append(f'{tag}: turn {turn:+.0f}: no spot candidate on the desk')
-                            continue
-                        reached = set()
-                        for s, path in self._grid(P[:2], tq[-1], yc, spots, f'{tag} turn {turn:+.0f}'):
-                            reached.add(s)
-                            if any(math.dist(s, b) < 0.05 for b in self._rl_bad_spots):
-                                continue
-                            ps_ = np.array([s[0], s[1], zc])
-                            pd = np.array([s[0], s[1], desk_tip])
+                        for turn in (90.0, -90.0):
+                            yc = y0 + math.radians(turn)
                             try:
-                                q = (path or tq)[-1]
-                                st = self._straighten(q, ps_, yc, f'spot {s}')
-                                down = self._chain(st[-1], seg(ps_, pd, 0.003), yc,
-                                                   surfaces=[(self._desk_geo[3], DESK_ON)],
-                                                   label=f'spot {s}: down')
-                                upe = self._chain(down[-1], seg(pd, ps_), yc, held=False,
-                                                  label=f'spot {s}: empty up')
+                                tq = self._turn(pull[-1], P, y0, yc, False, f'{tag}: turn {turn:+.0f}')
                             except RelayFail as e:
                                 why.append(str(e))
                                 continue
-                            # in empty along the way the tray comes out (fingers closed),
-                            # opened over the handle
-                            enter = pull[::-1] + [approach[0]]
-                            steps = [('traj', enter, ('in over the handle on D11 (fingers closed)',
-                                                      'out of the shelf (fingers closed)')),
-                                     ('fingers', (CLOSED, a.grasp_open),
-                                      ('open over the handle', 'close for the way out')),
-                                     ('traj', approach[1:], ('down to the handle on D11', 'up from D11')),
-                                     ('grasp', None, ('close: tray from D11', 'open: tray on D11')),
-                                     ('traj', lift + pull, ('lift, pull out of the shelf, up',
-                                                            'down, into the shelf, put down')),
-                                     ('traj', tq, (f'turn the tray {turn:+.0f}', f'turn the tray {-turn:+.0f}')),
-                                     ('traj', path, ('carry (tilted) to the desk spot',
-                                                         'carry (tilted) to the shelf')),
-                                     ('traj', st + down, ('straighten, put down on the desk',
-                                                          'lift off the desk, tilt')),
-                                     ('release', None, ('open: tray on the desk', 'close: tray from the desk')),
-                                     ('traj', upe, ('empty hand up', 'empty hand down to the tray'))]
-                            print(f'  relay leg A: {tag}, pull to ({pu[0]:+.3f}, {pu[1]:+.3f}), turn '
-                                  f'{turn:+.0f}, desk spot ({s[0]:+.2f}, {s[1]:+.2f})', flush=True)
-                            yield dict(steps=steps, spot=np.array(s), yc=yc, q_up=upe[-1],
-                                       q_rel=down[-1])
-                        why += [f'{tag}: turn {turn:+.0f}: spot {t} not reached tilted'
-                                for t in spots if t not in reached]
+                            spots = self.desk_spots(yc)
+                            if not spots:
+                                why.append(f'{tag}: turn {turn:+.0f}: no spot candidate on the desk')
+                                continue
+                            reached = set()
+                            for s, path in self._grid(P[:2], tq[-1], yc, spots, f'{tag} turn {turn:+.0f}'):
+                                reached.add(s)
+                                if any(math.dist(s, b) < 0.05 for b in self._rl_bad_spots):
+                                    continue
+                                ps_ = np.array([s[0], s[1], zc])
+                                pd = np.array([s[0], s[1], desk_tip])
+                                try:
+                                    q = (path or tq)[-1]
+                                    st = self._straighten(q, ps_, yc, f'spot {s}')
+                                    down = self._chain(st[-1], seg(ps_, pd, 0.003), yc,
+                                                       surfaces=[(self._desk_geo[3], DESK_ON)],
+                                                       label=f'spot {s}: down')
+                                    upe = self._chain(down[-1], seg(pd, ps_), yc, held=False,
+                                                      label=f'spot {s}: empty up')
+                                except RelayFail as e:
+                                    why.append(str(e))
+                                    continue
+                                # in empty along the way the tray comes out (fingers closed),
+                                # opened over the handle
+                                enter = pull[::-1] + [approach[0]]
+                                steps = [('traj', enter, ('in over the handle on D11 (fingers closed)',
+                                                          'out of the shelf (fingers closed)')),
+                                         ('fingers', (CLOSED, a.grasp_open),
+                                          ('open over the handle', 'close for the way out')),
+                                         ('traj', approach[1:], ('down to the handle on D11', 'up from D11')),
+                                         ('grasp', None, ('close: tray from D11', 'open: tray on D11')),
+                                         ('traj', lift + pull, ('lift, pull out of the shelf, up',
+                                                                'down, into the shelf, put down')),
+                                         ('traj', tq, (f'turn the tray {turn:+.0f}', f'turn the tray {-turn:+.0f}')),
+                                         ('traj', path, ('carry (tilted) to the desk spot',
+                                                             'carry (tilted) to the shelf')),
+                                         ('traj', st + down, ('straighten, put down on the desk',
+                                                              'lift off the desk, tilt')),
+                                         ('release', None, ('open: tray on the desk', 'close: tray from the desk')),
+                                         ('traj', upe, ('empty hand up', 'empty hand down to the tray'))]
+                                print(f'  relay leg A: {tag}, pull to ({pu[0]:+.3f}, {pu[1]:+.3f}), turn '
+                                      f'{turn:+.0f}, desk spot ({s[0]:+.2f}, {s[1]:+.2f})', flush=True)
+                                yield dict(steps=steps, spot=np.array(s), yc=yc, q_up=upe[-1],
+                                           q_rel=down[-1])
+                            why += [f'{tag}: turn {turn:+.0f}: spot {t} not reached tilted'
+                                    for t in spots if t not in reached]
         raise RelayFail('D11 <-> desk: no way\n    ' + '\n    '.join(why[-12:]))
 
     def plan_leg_b(self, A, bot, q_from):
@@ -566,78 +628,225 @@ class RelayMixin:
         surf = h[2] - a.tray_height
         G = (float(h[0]), float(h[1]))
         pput = h - [0, 0, a.grasp_depth - a.place_drop]
-        why = []
-        for gflip in (math.pi, 0.0):
-            yg = math.remainder(yc + gflip, 2 * math.pi)
-            tag = f'regrasp {math.degrees(gflip):.0f}'
-            qn = self._ik_any(pd, yg, False)
-            if qn is None:
-                why.append(f'{tag}: no normal grasp at the desk spot')
+        why, dead = [], set()
+        # pass 1 (--relay-grid-budget): only the turn at the desk spot, every grid search
+        # capped: a tool yaw that cannot reach the box (J6 limit) no longer costs a whole
+        # grid search before the one that works; pass 2: everything, no cap (as before)
+        passes = [(True, b) for b in a.relay_grid_budget if b > 0] + [(False, None)]
+        for quick, cap in passes:
+            for gflip in (math.pi, 0.0):
+                yg = math.remainder(yc + gflip, 2 * math.pi)
+                tag = f'regrasp {math.degrees(gflip):.0f}'
+                qn = self._ik_any(pd, yg, False)
+                if qn is None:
+                    why.append(f'{tag}: no normal grasp at the desk spot')
+                    continue
+                try:
+                    lift = self._chain(qn, seg(pd, ps_), yg, surfaces=[(self._desk_geo[3], DESK_ON)],
+                                       label=f'{tag}: lift')
+                    upe = self._chain(qn, seg(pd, ps_), yg, held=False, label=f'{tag}: empty')
+                except RelayFail as e:
+                    why.append(str(e))
+                    continue
+                # the box yaw needing the smaller turn first (the other one runs J6 to its limit)
+                for yb in sorted(self._yaws(bot['lr']),
+                                 key=lambda y: abs(math.remainder(y - yg, 2 * math.pi))):
+                    d = math.remainder(yb - yg, 2 * math.pi)
+                    tb = f'{tag}, box tool yaw {math.degrees(yb):.0f}'
+                    yb = yg + d
+                    ok = False
+                    key = (gflip, round(yb, 3))
+                    bkey = (round(float(s[0]), 3), round(float(s[1]), 3)) + key
+                    box_dead = self.__dict__.setdefault('_rl_box_dead', set())
+                    if bkey in box_dead:
+                        continue                     # reached the box before, no way down
+                    reached = False
+                    for pre, tq, path, where in self._turn_ways(lift[-1], ps_, yg, yb, G, tb, why,
+                                                                 quick, key in dead, cap):
+                        q = (path or tq)[-1]
+                        reached = True
+                        # putting it in the box: the centre first; no way down there -> up to
+                        # --relay-place-shift off it (toward the base first), from over the box
+                        # shifted spots only in the last (full) pass: costly, rarely needed
+                        for off in self._place_offsets(G, bot.get('place', False) and not quick):
+                            Go = (G[0] + off[0], G[1] + off[1])
+                            ho = h + [off[0], off[1], 0.0]
+                            pputo = pput + [off[0], off[1], 0.0]
+                            otag = '' if not any(off) else \
+                                f' ({off[0] * 1000:+.0f}, {off[1] * 1000:+.0f}) mm off the box centre'
+                            try:
+                                shift = [] if not any(off) else self._chain(
+                                    q, seg([G[0], G[1], zc], [Go[0], Go[1], zc]), yb, tilt=True,
+                                    label=f'{tb}: over the box{otag}')
+                            except RelayFail as e:
+                                why.append(str(e))
+                                continue
+                            q2 = shift[-1] if shift else q
+                            for hs in (0.08, 0.05, 0.02):
+                                pz = ho + [0, 0, hs]
+                                try:
+                                    dsc = shift + self._chain(q2, seg([Go[0], Go[1], zc], pz), yb, tilt=True,
+                                                              label=f'{tb}{otag}: tilted descent to +{hs * 100:.0f} cm')
+                                    st = self._straighten(dsc[-1], pz, yb, f'{tb}{otag}: +{hs * 100:.0f} cm')
+                                    down = self._chain(st[-1], seg(pz, pputo, 0.003), yb,
+                                                       surfaces=[(surf, BOX_ON)],
+                                                       label=f'{tb}{otag}: into the box')
+                                    out = self._chain(down[-1], seg(pputo, ho + [0, 0, a.approach_above]),
+                                                      yb, held=False, label=f'{tb}{otag}: up out of the box')
+                                    ok = True
+                                    break
+                                except RelayFail as e:
+                                    why.append(str(e))
+                            if ok:
+                                if any(off):
+                                    self.say(f'relay: the box centre has no way down: placed{otag}')
+                                break
+                        if ok:
+                            break
+                    if quick and self._rl_spot_dead:
+                        dead.add(key)                # no need to try the desk spot turn again
+                    if reached and not ok and not quick:
+                        box_dead.add(bkey)           # over the box but no way down: not again
+                        print(f'  relay {tb}: over the box, no way down into it (centre / '
+                              'shifted): not tried again', flush=True)
+                    if not ok:
+                        continue
+                    # the empty arm switch with the tray on the desk as an obstacle
+                    self._scene(world=[self._tray_world(A['q_rel'], TMP_ID)])
+                    try:
+                        sw = self._ompl(q_from, upe[-1], 'arm switch over the desk tray', grip=CLOSED)
+                    except RelayFail as e:
+                        why.append(str(e))
+                        continue
+                    finally:
+                        self._remove_world(TMP_ID)
+                    # the arm switch with the fingers closed (more room over the desk tray),
+                    # opened over it again before going down
+                    steps = [('fingers', (a.grasp_open, CLOSED), ('close for the arm switch',
+                                                                  'open over the tray on the desk')),
+                             ('traj', sw, ('arm switch (empty, fingers closed, over the tray on the desk)',
+                                           'arm switch back (empty, fingers closed, over the tray on the desk)')),
+                             ('fingers', (CLOSED, a.grasp_open), ('open over the tray on the desk',
+                                                                  'close for the arm switch back')),
+                             ('traj', upe[::-1][1:] + [qn], (f'down to the tray (fingers turned '
+                                                             f'{math.degrees(gflip):.0f})', 'empty hand up')),
+                             ('grasp', None, ('close: tray from the desk', 'open: tray on the desk')),
+                             ('traj', lift, ('lift off the desk', 'put down on the desk')),
+                             ('traj', pre, (f'carry (tilted) to the turn point {where}',
+                                            'carry (tilted) to the desk spot')),
+                             ('traj', tq, (f'turn the tray {math.degrees(d):+.0f} {where}',
+                                           f'turn the tray {-math.degrees(d):+.0f} {where}')),
+                             ('traj', path, ('carry (tilted) over the TurtleBot',
+                                             'carry (tilted) to the ' + ('turn point' if pre else 'desk spot'))),
+                             ('traj', dsc + st + down, ('lower tilted, straighten, into the box',
+                                                        'lift out of the box, tilt, up')),
+                             ('release', None, ('open: tray in the box', 'close: tray from the box')),
+                             ('traj', out, ('empty hand up', 'down to the handle in the box')),
+                             # closed before the arm moves on (j / r backwards: comes closed,
+                             # opened here over the handle)
+                             ('fingers', (a.grasp_open, CLOSED), ('close over the box',
+                                                                  'open over the handle in the box'))]
+                    print(f'  relay leg B: {tb}, turned {where}, straightened at +{hs * 100:.0f} cm',
+                          flush=True)
+                    return dict(steps=steps, yb=yb)
+        raise RelayFail('desk <-> TurtleBot: no way\n    ' + '\n    '.join(why[-12:]))
+
+    def _place_offsets(self, G, place):
+        """Where in the box: the centre, then (placing only) points --relay-place-shift off
+        it (each distance in turn, e.g. 5 then 10 mm), toward the arm base first, then
+        diagonally, sideways, away: [(dx, dy)]."""
+        out = [(0.0, 0.0)]
+        if not place:
+            return out
+        r = math.hypot(*G)
+        ui = (-G[0] / r, -G[1] / r) if r > 1e-6 else (-1.0, 0.0)   # toward the base
+        up = (-ui[1], ui[0])
+        for d in self.args.relay_place_shift:
+            if d <= 0:
                 continue
+            k = d / math.sqrt(2)
+            out.append((ui[0] * d, ui[1] * d))
+            out += [((ui[0] + up[0] * b) * k, (ui[1] + up[1] * b) * k) for b in (1, -1)]
+            out += [(up[0] * d * b, up[1] * d * b) for b in (1, -1)]
+            out += [((-ui[0] + up[0] * b) * k, (-ui[1] + up[1] * b) * k) for b in (1, -1)]
+            out.append((-ui[0] * d, -ui[1] * d))
+        return out
+
+    def relay_check_box_r(self, h, what, place=False):
+        """The TurtleBot box (place spot / tray in it) within --bot-r-range of the arm base
+        axis? Placing (place=True) up to --bot-place-in beyond the max: the tray goes that much
+        toward the base inside the box (the Burger is never exactly where it should be).
+        Else Stop at once (no planning: out there it fails after minutes). -> h (moved)."""
+        a = self.args
+        lo, hi = a.bot_r_range
+        h = np.asarray(h, float)
+        r = math.hypot(float(h[0]), float(h[1]))
+        rng = f'{lo * 1000:.0f}..{hi * 1000:.0f} mm'
+        if lo <= r <= hi:
+            self.say(f'{what} {r * 1000:.0f} mm from the arm base (ok: {rng})')
+            return h
+        if place and hi < r <= hi + a.bot_place_in:
+            d = r - hi
+            out = h.copy()
+            out[:2] = h[:2] * (hi / r)
+            self.say(f'{what} {r * 1000:.0f} mm from the arm base, {d * 1000:.0f} mm beyond '
+                     f'{hi * 1000:.0f} mm: the tray put {d * 1000:.0f} mm toward the arm base '
+                     f'inside the box ({out[0] * 1000:.0f}, {out[1] * 1000:.0f}) mm')
+            return out
+        hi2 = hi + (a.bot_place_in if place else 0.0)
+        move = (f'move the Burger {(r - hi2) * 1000:.0f} mm closer' if r > hi2 else
+                f'move the Burger {(lo - r) * 1000:.0f} mm farther away')
+        raise Stop(f'{what} {r * 1000:.1f} mm from the arm base, outside {rng}'
+                   + (f' (+{a.bot_place_in * 1000:.0f} mm placing inward)' if place else '')
+                   + f': {move} (not planned)')
+
+    def _turn_ways(self, q0, ps_, yg, yb, G, tb, why, quick=False, skip_spot=False, cap=None):
+        """Desk spot (lifted to the carry height, tool yaw yg, arm at q0) -> over the box G
+        with the tool at yb: where the tray is turned. First right at the desk spot (short);
+        a desk spot near the arm base sweeps the 15 cm tray over the base there, so then
+        carried unturned (tilted grid) to a turn point farther out, 35 / 70 % of the way
+        to the box or over the box itself, turned there, carried on.
+        A generator: yields (pre, turn, post, where) joint paths; failures into why.
+        quick: only the turn at the desk spot, the grid capped at cap points;
+        self._rl_spot_dead = that way is impossible (turn blocked / grid exhausted, not
+        capped). skip_spot: leave the desk spot turn out (known dead)."""
+        a, zc = self.args, self.args.relay_carry_z
+        d = math.degrees(yb - yg)
+        cap = cap if quick else None
+        self._rl_spot_dead = False
+        if not skip_spot:
             try:
-                lift = self._chain(qn, seg(pd, ps_), yg, surfaces=[(self._desk_geo[3], DESK_ON)],
-                                   label=f'{tag}: lift')
-                upe = self._chain(qn, seg(pd, ps_), yg, held=False, label=f'{tag}: empty')
+                tq = self._turn(q0, ps_, yg, yb, True, f'{tb}: turn {d:+.0f} at the desk spot')
+                post = next((p for _, p in self._grid(ps_[:2], tq[-1], yb, [G], tb, cap)), None)
+                if post is None:
+                    why.append(f'{tb}: the box not reached tilted')
+                    self._rl_spot_dead = not self._rl_grid_capped
+                else:
+                    yield [], tq, post, 'at the desk spot'
+            except RelayFail as e:
+                why.append(str(e))
+                self._rl_spot_dead = True
+        if quick:
+            return
+        S, Gv = np.asarray(ps_[:2], float), np.asarray(G, float)
+        cands = [tuple(np.round(S + (Gv - S) * f, 3)) for f in (0.35, 0.7)] + [tuple(map(float, G))]
+        for T, pre in self._grid(ps_[:2], q0, yg, cands, f'{tb} unturned'):
+            q1 = (pre or [q0])[-1]
+            P = np.array([T[0], T[1], zc])
+            where = 'over the box' if math.dist(T, G) < 1e-6 else f'at ({T[0]:+.2f}, {T[1]:+.2f})'
+            try:
+                tq = self._turn(q1, P, yg, yb, True, f'{tb}: turn {d:+.0f} {where}')
             except RelayFail as e:
                 why.append(str(e))
                 continue
-            # the box yaw needing the smaller turn first (the other one runs J6 to its limit)
-            for yb in sorted(self._yaws(bot['lr']),
-                             key=lambda y: abs(math.remainder(y - yg, 2 * math.pi))):
-                d = math.remainder(yb - yg, 2 * math.pi)
-                tb = f'{tag}, box tool yaw {math.degrees(yb):.0f}'
-                try:
-                    tq = self._turn(lift[-1], ps_, yg, yg + d, True, f'{tb}: turn {math.degrees(d):+.0f}')
-                except RelayFail as e:
-                    why.append(str(e))
+            if math.dist(T, G) < 1e-6:
+                post = []
+            else:
+                post = next((p for _, p in self._grid(T, tq[-1], yb, [G], f'{tb} turned')), None)
+                if post is None:
+                    why.append(f'{tb}: turned {where}, the box not reached tilted')
                     continue
-                yb = yg + d
-                path = next((p for _, p in self._grid(ps_[:2], tq[-1], yb, [G], tb)), None)
-                if path is None:
-                    why.append(f'{tb}: the box not reached tilted')
-                    continue
-                q, ok = (path or tq)[-1], False
-                for hs in (0.08, 0.05, 0.02):
-                    pz = h + [0, 0, hs]
-                    try:
-                        dsc = self._chain(q, seg([G[0], G[1], zc], pz), yb, tilt=True,
-                                          label=f'{tb}: tilted descent to +{hs * 100:.0f} cm')
-                        st = self._straighten(dsc[-1], pz, yb, f'{tb}: +{hs * 100:.0f} cm')
-                        down = self._chain(st[-1], seg(pz, pput, 0.003), yb, surfaces=[(surf, BOX_ON)],
-                                           label=f'{tb}: into the box')
-                        out = self._chain(down[-1], seg(pput, h + [0, 0, a.approach_above]), yb,
-                                          held=False, label=f'{tb}: up out of the box')
-                        ok = True
-                        break
-                    except RelayFail as e:
-                        why.append(str(e))
-                if not ok:
-                    continue
-                # the empty arm switch with the tray on the desk as an obstacle
-                self._scene(world=[self._tray_world(A['q_rel'], TMP_ID)])
-                try:
-                    sw = self._ompl(q_from, upe[-1], 'arm switch over the desk tray')
-                except RelayFail as e:
-                    why.append(str(e))
-                    continue
-                finally:
-                    self._remove_world(TMP_ID)
-                steps = [('traj', sw, ('arm switch (empty, over the tray on the desk)',
-                                       'arm switch back (empty, over the tray on the desk)')),
-                         ('traj', upe[::-1][1:] + [qn], (f'down to the tray (fingers turned '
-                                                         f'{math.degrees(gflip):.0f})', 'empty hand up')),
-                         ('grasp', None, ('close: tray from the desk', 'open: tray on the desk')),
-                         ('traj', lift, ('lift off the desk', 'put down on the desk')),
-                         ('traj', tq, (f'turn the tray {math.degrees(d):+.0f}',
-                                       f'turn the tray {-math.degrees(d):+.0f}')),
-                         ('traj', path, ('carry (tilted) over the TurtleBot', 'carry (tilted) to the desk spot')),
-                         ('traj', dsc + st + down, ('lower tilted, straighten, into the box',
-                                                    'lift out of the box, tilt, up')),
-                         ('release', None, ('open: tray in the box', 'close: tray from the box')),
-                         ('traj', out, ('empty hand up', 'down to the handle in the box'))]
-                print(f'  relay leg B: {tb}, straightened at +{hs * 100:.0f} cm', flush=True)
-                return dict(steps=steps, yb=yb)
-        raise RelayFail('desk <-> TurtleBot: no way\n    ' + '\n    '.join(why[-12:]))
+            yield pre, tq, post, where
 
     def relay_verify(self, steps, title, start_tray=True):
         """Every planned path checked again densely (joints <= 1 deg apart), as it will run:
@@ -823,7 +1032,7 @@ class RelayMixin:
         if off > 3.0:
             raise Stop(f'{label}: the arm is {off:.1f} deg away from the planned start')
         pts = [q0] + list(qs)
-        dts = self._times(pts)
+        dts = [dt / self.sim_speed() for dt in self._times(pts)]
         jt, t = JointTrajectory(joint_names=list(ARM_JOINTS)), 0.0
         for v, dt in zip(pts, [0.0] + dts):
             t += dt
@@ -871,12 +1080,53 @@ class RelayMixin:
                 if a.go:
                     self._detach(self.node.q())
 
+    def relay_fail_home(self, why, q_start=None):
+        """An error before anything is carried (no tray seen there, TurtleBot not found, no
+        plan): ERROR logged, the empty arm back to the home pose (else q_start) with the
+        gripper closed, then Stop(why). The stop key (x / SPACE): no move, Stop at once."""
+        if self._abort.is_set():
+            raise Stop(why)
+        first = why.splitlines()[0]
+        self.say(f'ERROR: {first}')
+        try:
+            self.node.get_logger().error(first)
+        except Exception:  # noqa: BLE001
+            pass
+        target = self.home if self.home is not None else q_start
+        if self.args.go and target is not None and not self.holding:
+            self.say('back to home (error)')
+            try:
+                self.relay_go_to(target, 'back to home (error)', grip=CLOSED)
+            except Stop as e:
+                why += f'\n  (back to home failed: {e})'
+        raise Stop(why)
+
+    def relay_home(self, grip):
+        """After the hand-over (--relay-end home): back to the home pose (OMPL; the tray just
+        put down is still an obstacle), then the gripper closed. grip: the fingers now."""
+        a = self.args
+        if a.relay_end != 'home':
+            return
+        if self.home is None:
+            self.say('no home pose: the arm stays here')
+            return
+        self.confirm('back to home, then close the gripper')
+        if a.go:
+            self.relay_go_to(self.home, 'back to home', grip=grip)
+            self._fingers(CLOSED)
+        else:
+            self.say('(dry run) back to home, gripper closed')
+
     def _fingers(self, w):
         """Empty gripper to opening w (CLOSED = closed)."""
         if w <= CLOSED + 1e-6:
             self.gripper(False)
         else:
             self.gripper(True, w)
+
+    def sim_speed(self):
+        """--sim-speed in the simulation (fake driver), else 1."""
+        return max(0.05, self.args.sim_speed) if self.conn in ('fake', None) else 1.0
 
     def relay_go_to(self, q, label, grip=None):
         """From wherever the arm is to the first planned point: OMPL (empty arm, up to 6
@@ -910,7 +1160,7 @@ class RelayMixin:
         b = self.bot
         return dict(h=np.array([b['place_xy'][0], b['place_xy'][1],
                                 b['place_z'] + self.args.tray_height], float),
-                    lr=float(b['place_yaw']))
+                    lr=float(b['place_yaw']), place=True)
 
     def relay_layout(self):
         """--layout-poses (simulation): the poses as arranged in RViz (ros2 run mycobot_tasks
@@ -942,9 +1192,52 @@ class RelayMixin:
                 a.scene_args, tuple(self.bot_extra),
                 os.path.getmtime(lay) if '--layout' in a.scene_args and os.path.exists(lay) else 0,
                 tuple(a.relay_tray), a.relay_tilt, a.relay_carry_z, tuple(a.relay_spots or ()),
-                tuple(a.relay_spot_r), a.relay_plan_pad)
+                tuple(a.relay_spot_r), tuple(a.relay_plan_pads))
+
+    def _with_pads(self, plan, label):
+        """plan() with the held tray grown by each --relay-plan-pad value in turn (the most
+        clearance first, e.g. 5 -> 3 -> 0 mm): the first that works. Its clearance is said;
+        0 mm = WARNING (a tight path: watch it on the real robot)."""
+        a = self.args
+        pads = list(a.relay_plan_pads)
+        err = None
+        dl = self._plan_deadline()
+        dl.__enter__()
+        try:
+            for i, pad in enumerate(pads):
+                a.relay_plan_pad = pad
+                try:
+                    out = plan()
+                except Stop as e:
+                    if self._abort.is_set() or isinstance(e, PlanTimeout):
+                        raise
+                    err = e
+                    if i + 1 < len(pads):
+                        self.say(f'{label}: no way with {pad * 1000:.0f} mm clearance around '
+                                 f'the tray: trying {pads[i + 1] * 1000:.0f} mm')
+                    continue
+                self._rl_pad_used = pad
+                if pad <= 0.0:
+                    self.say(f'WARNING: {label} planned with NO clearance margin around the '
+                             'tray (tight: real servo error can touch)')
+                else:
+                    self.say(f'{label}: planned with {pad * 1000:.0f} mm clearance around the tray')
+                return out
+        finally:
+            a.relay_plan_pad = pads[0]
+            dl.__exit__(None, None, None)
+        raise err
 
     def relay_plan_a(self, d11):
+        return self._with_pads(lambda: self._relay_plan_a_once(d11), 'D11 -> desk')
+
+    def relay_plan_b(self, A, bot, q_from):
+        return self._with_pads(lambda: self._relay_plan_b_once(A, bot, q_from), 'desk -> TurtleBot')
+
+    def relay_plan(self, d11, bot):
+        return self._with_pads(lambda: self._relay_plan_once(d11, bot), 'D11 <-> TurtleBot')
+
+    def _relay_plan_a_once(self, d11):
         """n, first part: D11 -> desk spot only (the TurtleBot is measured after the tray is
         on the desk). The first desk spot that works from D11. -> A (see plan_leg_a)."""
         self.relay_setup()
@@ -960,6 +1253,7 @@ class RelayMixin:
             return cached[1]
         t0 = time.monotonic()
         self._rl_bad_spots = []
+        self._rl_rng = np.random.default_rng(0)      # the same poses -> the same plan
         try:
             for A in self.plan_leg_a(d11):
                 why = self._regrasp_ok(A)
@@ -999,7 +1293,7 @@ class RelayMixin:
             return str(e)
         return None
 
-    def relay_plan_b(self, A, bot, q_from):
+    def _relay_plan_b_once(self, A, bot, q_from):
         """n, second part: desk spot (tray standing there, arm empty at q_from) ->
         TurtleBot box. -> B (see plan_leg_b) or Stop."""
         a = self.args
@@ -1009,6 +1303,7 @@ class RelayMixin:
         # held here: planned without it (plan_leg_b puts it in as an obstacle for the empty
         # arm switch only); the caller puts it back
         self._remove_world(TRAY_ID)
+        self._rl_rng = np.random.default_rng(1)
         t0 = time.monotonic()
         try:
             B = self.plan_leg_b(A, bot, q_from)
@@ -1017,7 +1312,74 @@ class RelayMixin:
         self.say(f'relay plan desk -> TurtleBot OK in {time.monotonic() - t0:.0f} s')
         return B
 
-    def relay_plan(self, d11, bot):
+    # ------------------------------------------------------------------ desk <-> TurtleBot only
+    def relay_desk_A(self, d):
+        """A tray standing on the desk (d = dict(h=handle top xyz, lr=L -> R)) as leg A
+        leaves it -> the A dict plan_leg_b needs (spot, yc, q_rel), or None (no normal-arm
+        grasp there)."""
+        pd = np.array([d['h'][0], d['h'][1], self._desk_geo[3] + self._tip_to_bottom()])
+        for yc in self._yaws(d['lr']):
+            q = self._ik_any(pd, yc, False)
+            if q is not None:
+                return dict(spot=np.array(d['h'][:2], float), yc=yc, q_rel=q)
+        return None
+
+    def relay_desk_cands(self):
+        """Desk tray poses to try: --relay-desk, else the automatic desk spots (see
+        desk_spots), each with the tool along / across the base direction."""
+        a = self.args
+        z = self._desk_geo[3] + a.tray_height
+        if a.relay_desk:
+            x, y, yd = a.relay_desk
+            lr = math.radians(yd)
+            if not self.on_desk((x, y), lr + math.radians(a.grip_yaw_offset)):
+                raise Stop(f'--relay-desk {x:.3f},{y:.3f},{yd:.0f}: the tray '
+                           f'({a.relay_tray[0] * 100:.0f} x {a.relay_tray[1] * 100:.0f} cm) is '
+                           'not on the desk there (1 cm in from its edges)')
+            return [dict(h=np.array([x, y, z]), lr=lr)]
+        out, off = [], math.radians(a.grip_yaw_offset)
+        for k in (0.0, math.pi / 2):
+            for s in self.desk_spots(0.0):
+                th = math.atan2(s[1], s[0]) + k
+                if self.on_desk(s, th):
+                    out.append((abs(math.hypot(*s) - sum(a.relay_spot_r) / 2), len(out),
+                                dict(h=np.array([s[0], s[1], z]), lr=th - off)))
+        return [d for *_, d in sorted(out, key=lambda t: (t[0], t[1]))]
+
+    def relay_plan_desk(self, bot, q_from, desk=None):
+        """Desk <-> TurtleBot only (plan_leg_b): desk = the tray on the desk, or None: the
+        poses of relay_desk_cands tried (at most --relay-max-spots). q_from: the arm now.
+        -> (A, B) or Stop (nothing moved)."""
+        a = self.args
+        self._rl_surfaces = [(self._desk_geo[3], DESK_ON)]
+        cands = [desk] if desk is not None else self.relay_desk_cands()[:a.relay_max_spots]
+        if not cands:
+            raise Stop('no desk spot candidate (--relay-desk / --relay-spot-r)')
+        why = []
+        with self._plan_deadline():
+            return self._relay_plan_desk_cands(cands, bot, q_from, why)
+
+    def _relay_plan_desk_cands(self, cands, bot, q_from, why):
+        for d in cands:
+            tag = (f'desk tray ({d["h"][0] * 1000:.0f}, {d["h"][1] * 1000:.0f}) mm, L->R '
+                   f'{math.degrees(d["lr"]):.0f} deg')
+            A = self.relay_desk_A(d)
+            if A is None:
+                why.append(f'{tag}: no normal-arm grasp')
+                continue
+            try:
+                B = self.relay_plan_b(A, bot, q_from)
+            except Stop as e:
+                if self._abort.is_set() or isinstance(e, PlanTimeout):
+                    raise
+                why.append(f'{tag}: ' + ' / '.join(str(e).splitlines()[1:3]).strip())
+                self.say(f'relay: {tag}: no way, next')
+                continue
+            self.say(f'relay desk <-> TurtleBot: {tag}')
+            return A, B
+        raise Stop('relay plan desk <-> TurtleBot failed, nothing moved:\n  ' + '\n  '.join(why[-4:]))
+
+    def _relay_plan_once(self, d11, bot):
         """Both legs; the same poses (1 mm / 0.5 deg) and scene as the last plan -> that
         plan again (e.g. a dry run first, then --go / auto)."""
         self.relay_setup()
@@ -1030,7 +1392,7 @@ class RelayMixin:
                a.scene_args, tuple(self.bot_extra),
                os.path.getmtime(lay) if '--layout' in a.scene_args and os.path.exists(lay) else 0,
                tuple(a.relay_tray), a.relay_tilt, a.relay_carry_z, tuple(a.relay_spots or ()),
-               tuple(a.relay_spot_r), a.relay_plan_pad)
+               tuple(a.relay_spot_r), tuple(a.relay_plan_pads))
         self._rl_surfaces = [(float(d11['h'][2]) - a.tray_height, D11_ON),
                              (self._desk_geo[3], DESK_ON),
                              (float(bot['h'][2]) - a.tray_height, BOX_ON)]
@@ -1039,6 +1401,7 @@ class RelayMixin:
             self.say('relay plan: same poses and scene as the last plan, reused')
             return cached[1], cached[2]
         t0 = time.monotonic()
+        self._rl_rng = np.random.default_rng(0)      # the same poses -> the same plan
         # desk spots in turn until the desk -> TurtleBot part works from one of them
         self._rl_bad_spots, whyb, B = [], [], None
         try:

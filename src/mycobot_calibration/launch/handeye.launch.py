@@ -85,7 +85,8 @@ def setup(context):
     if layout:
         # robot direction / desk / TurtleBot / shelf / D11 handles in RViz (namespace /layout)
         actions.append(TimerAction(period=4.0, actions=[Node(
-            package='mycobot_tasks', executable='layout', name='layout', output='screen')]))
+            package='mycobot_tasks', executable='layout', name='layout', output='screen',
+            arguments=['--scene-args=' + shlex.join(scene_args)])]))
 
     if on('regions'):
         # shelf / TurtleBot search regions (RViz Interact: drag the corner spheres to resize,

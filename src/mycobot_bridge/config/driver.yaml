@@ -68,6 +68,7 @@ mycobot_driver:
     ff_log_csv: ~/final_project_ws/ff_log.csv   # one row per trajectory, for re-fitting ff ('' = off)
     hold_log_csv: ~/final_project_ws/hold_log.csv   # per trajectory: joint shake for hold_log_s after arrival ('' = off)
     hold_log_s: 8.0
+    track_log_csv: ~/final_project_ws/track_log.csv   # per trajectory: joint error WHILE moving + connection ('' = off)
     ff_min_move_deg: 1.0        # joints moving less than this get no direction term
 
     # myGripper F100 force-control (pro) gripper, pymycobot set/get_pro_gripper_angle

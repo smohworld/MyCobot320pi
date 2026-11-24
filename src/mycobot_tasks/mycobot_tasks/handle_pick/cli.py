@@ -15,13 +15,25 @@ from mycobot_tasks.handle_pick.base import _tee_stdout
 from mycobot_tasks.handle_pick.window import view
 
 
+# tray presets (--tray-type): the values tray_handle_pick plans with
+TRAY_TYPES = {
+    # shelf tray (guide part E): body 150 x 100 x 56, handle bar 91 mm along the 10 cm side,
+    # handle top 76 mm; 15 cm side along the box 20 cm side
+    'shelf': dict(tray_height=0.076, relay_tray=(0.15, 0.10, 0.056), bot_yaw_offset=90.0,
+                  grasp_depth=0.024, approach_above=0.036),
+    # test tray: 16 x 10, handle top 72 mm, handle along the 16 cm side (fingers close along
+    # the 10 cm side); 16 cm side along the box 20 cm side. Body height: not measured (56?)
+    'test': dict(tray_height=0.072, relay_tray=(0.10, 0.16, 0.056), bot_yaw_offset=0.0,
+                 grasp_depth=0.020, approach_above=0.04),
+}
+
+
 def main():
     from ament_index_python.packages import get_package_share_directory
     from mycobot_tasks import tray_handle_pick
     a = argparse.ArgumentParser(description=tray_handle_pick.__doc__.split('\n\n')[0])
     g = a.add_argument
     # markers / handle
-    g('--tray', type=int, default=0, help='tray number (IDs 10+2t left, 11+2t right)')
     g('--marker-size', type=float, default=0.0225, help='black marker side [m]')
     g('--gap', type=float, default=0.024,
       help='handle length = gap between the inner edges of the two cut marker TILES '
@@ -33,9 +45,9 @@ def main():
       help='or the L-R marker centre spacing directly [m] (overrides --gap)')
     g('--max-spacing-err', type=float, default=0.004, help='refuse above this [m]')
     g('--max-tilt', type=float, default=10.0, help='marker plane tilt limit [deg]')
-    g('--grasp-depth', type=float, default=0.020,
+    g('--grasp-depth', type=float, default=0.024,
       help='finger tips this far below the handle top (marker plane) when grasping [m]')
-    g('--approach-above', type=float, default=0.04,
+    g('--approach-above', type=float, default=0.036,
       help='approach / lift: finger tips this far above the handle top [m]')
     g('--servo-above', type=float, default=0.08,
       help='first go with the finger tips this far above the handle top [m]')
@@ -130,7 +142,7 @@ def main():
     g('--search-min-height', type=float, default=0.18)
     g('--search', action='store_true', help='go to the search pose first (it becomes home)')
     g('--do', choices=['', 'none', 'detect', 'hover', 'pick', 'pickplace', 'find', 'bot',
-                       'sweep', 'return', 'shelf', 'd11bot', 'botd11'],
+                       'sweep', 'return', 'shelf', 'd11bot', 'botd11', 'deskbot', 'botdesk'],
       default='')
     g('--place-at', type=lambda t: t if t in ('bot', 'shelf') else
       [float(v) for v in t.split(',')],
@@ -187,8 +199,9 @@ def main():
     g('--bot-home', action='store_true',
       help='after finding the TurtleBot go back to home before the tray search (default: '
            'search the tray right from there)')
-    g('--bot-yaw-offset', type=float, default=0.0,
-      help="--place-yaw bot: tray L -> R = marker +x turned by this [deg]")
+    g('--bot-yaw-offset', type=float, default=90.0,
+      help="--place-yaw bot: tray L -> R = marker +x turned by this [deg] (90: the shelf "
+           "tray's 15 cm side along the box 20 cm side; 0 = the 16 x 10 test tray)")
     g('--bot-box-offset', type=lambda t: [float(v) for v in t.split(',')],
       default=[0.0, 0.0],
       help='scene: box centre from the marker centre, dx,dy in the marker frame [m]')
@@ -225,7 +238,11 @@ def main():
       help='r: even when that origin was already used once')
     g('--bot-save', default='~/.ros/turtlebot_last.yaml',
       help='TurtleBot detection saved here (used by --replay)')
-    g('--tray-height', type=float, default=0.072,
+    g('--tray-type', choices=list(TRAY_TYPES), default='shelf',
+      help='tray preset (options given on the command line win): ' + '; '.join(
+          f'{k}: ' + ' '.join(f'--{o.replace("_", "-")} {v}' for o, v in d.items())
+          for k, d in TRAY_TYPES.items()))
+    g('--tray-height', type=float, default=0.076,
       help='tray bottom -> handle top (marker plane) [m]: the place heights come from it')
     g('--tray-height-tol', type=float, default=0.015,
       help='warn when the measured handle top over --table-z differs more [m]')
@@ -270,20 +287,43 @@ def main():
       help='n / j: after planning, every path is checked densely again, once as planned '
            '(contact = refused) and once with the tray grown by this on every side: the '
            'spots with less clearance are listed [m]')
-    g('--relay-plan-pad', type=float, default=0.0,
-      help='n / j: plan with the held tray grown by this on every side [m] (clearance from '
-           'the arm base / shelf; larger = safer, fewer ways, slower)')
+    g('--relay-plan-pad', type=lambda t: [float(v) for v in t.split(',')],
+      default=[0.005, 0.003, 0.0],
+      help='n / j / e / r: plan with the held tray grown by this on every side [m] (clearance '
+           'from the arm base / shelf), several = tried in turn until one works (most first; '
+           'default 0.005,0.003,0: 0 mm used = WARNING)')
     g('--relay-carry-z', type=float, default=0.125,
       help='n / j: finger tip height while carrying over the grid, base z [m]')
     g('--relay-pull-r', type=float, default=0.16,
       help='n / j: out of the shelf the tray is pulled toward the base to this radius [m]')
-    g('--relay-spots', type=lambda t: [tuple(float(v) for v in p.split(',')) for p in
-                                       t.split(';') if p.strip()],
+    g('--relay-spots', type=lambda t: None if t.strip().lower() == 'auto' else
+      [tuple(float(v) for v in p.split(',')) for p in t.split(';') if p.strip()],
       default=None,
-      help='n / j: desk spot candidates for the handle midpoint, "x,y;x,y;..." base [m] '
-           '(the tray must lie fully on the desk); default: from the layout (desk grid, '
-           'see --relay-spot-r)')
-    g('--relay-spot-r', type=lambda t: [float(v) for v in t.split(',')], default=[0.17, 0.25],
+      help='n / j / e / r: desk spot(s) for the handle midpoint, "x,y;x,y;..." base [m] (the '
+           'tray must lie fully on the desk), e.g. -0.22,0 behind the arm base; default '
+           '(auto): a desk grid at --relay-spot-r. e looks for the tray only there (camera '
+           'over each spot; auto: the first one), r puts it there')
+    g('--relay-plan-timeout', type=float, default=120.0,
+      help='n / j / e / r: one planning part longer than this = failed (ERROR, the arm back '
+           'home) [s] (0 = no limit). The real robot plans ~3x slower than the simulation')
+    g('--bot-place-in', type=float, default=0.01,
+      help='n / e (placing): the TurtleBot box up to this beyond the --bot-r-range max is '
+           'still used, the tray put that much toward the arm base inside the box [m]')
+    g('--relay-place-shift', type=lambda t: [float(v) for v in t.split(',')], default=[0.005, 0.01],
+      help='n / e: no way down into the TurtleBot box at its centre -> the tray put this far '
+           'off it, each value in turn (toward the arm base first) [m] (0 = centre only)')
+    g('--bot-r-range', type=lambda t: [float(v) for v in t.split(',')], default=[0.23, 0.30],
+      help='n / j / e / r: the TurtleBot box centre (marker / tray in it) must be this far from '
+           'the arm base axis, min,max [m]; outside: ERROR at once, no planning (sim: 30.5 and '
+           '31.1 cm fail, 22 cm fails)')
+    g('--relay-grid-budget', type=lambda t: [int(v) for v in t.split(',')], default=[100],
+      help='n / j / e / r: desk -> TurtleBot first tried quickly: turn at the desk spot only, '
+           'each carry grid search stopped after this many points, one pass per value '
+           '(e.g. 40,120); nothing -> everything without a cap (0 = no quick pass) [points]')
+    g('--relay-end', choices=['home', 'stay'], default='home',
+      help='n / j / e / r: after the hand-over back to the home pose (the start pose / '
+           'search pose), then the gripper closed; stay = the arm stays where it ended')
+    g('--relay-spot-r', type=lambda t: [float(v) for v in t.split(',')], default=[0.20, 0.23],
       help='n / j: automatic desk spots: radius range from the base axis rmin,rmax [m]')
     g('--relay-max-spots', type=int, default=5,
       help='n / j: desk spots tried when desk -> TurtleBot does not work from one [count]')
@@ -292,11 +332,24 @@ def main():
       help='n / j: carry grid xmin,xmax,ymin,ymax [m] (2 cm steps)')
     g('--relay-min-r', type=float, default=0.12, help='n / j: grid points this close to '
       'the base axis are left out [m]')
-    g('--relay-touch', type=float, default=0.015,
-      help='n / j: tray bottom within this over the surface it is put on / taken from: its '
-           'contacts with the scene there are normal (not collisions) [m]')
+    g('--relay-touch', type=float, default=0.02,
+      help='n / j / e / r: tray bottom within this over the surface it is put on / taken from '
+           '(D11 fork / desk top / TurtleBot box floor, not its walls): contacts with that '
+           'surface are normal (not collisions) [m]; covers the shelf margin (1 cm) + the '
+           'tray clearance (--relay-plan-pad)')
     g('--relay-speed', type=float, default=0.35,
       help='n / j: fastest joint speed of the relay paths [rad/s]')
+    g('--relay-grasp-tries', type=int, default=3,
+      help='n / j: different grasp poses (IK branches) tried on D11 when the pull out from '
+           'one hits the rack / the arm itself [count]')
+    g('--sim-speed', type=float, default=1.0,
+      help='SIMULATION only (fake driver): motions this many times faster (relay paths '
+           'and MoveIt moves; e.g. 3 = 3x, 0.5 = half speed). The real robot ignores it')
+    g('--relay-desk', type=lambda t: [float(v) for v in t.split(',')], default=None,
+      help='e / r (desk <-> TurtleBot): x,y,yaw: the tray on the desk, handle midpoint [m] '
+           'and L -> R [deg], base frame. r: where it is put (default: the planner picks a '
+           'desk spot); e with --layout-poses (simulation, no camera): where it stands '
+           '(default: a desk spot the planner picks); e on the real robot: measured')
     g('--relay-d11', default='~/.ros/layout_tray.yaml',
       help='n: where the camera looks for the tray on D11 first; j: where the tray goes on D11 '
            '(layout export: handle top xyz + L -> R yaw)')
@@ -329,7 +382,7 @@ def main():
         t = sys.argv[1 + i]
         nxt = sys.argv[2 + i] if i + 2 < len(sys.argv) else None
         if t in ('--place-offset', '--place-at', '--place-yaw', '--place-z', '--shelf-yaw',
-                 '--bot-place-offset', '--bot-box-offset', '--relay-spots',
+                 '--bot-place-offset', '--bot-box-offset', '--relay-spots', '--relay-desk',
                  '--relay-grid') and nxt and nxt[:1] == '-':
             argv.append(f'{t}={nxt}')
             i += 2
@@ -337,6 +390,13 @@ def main():
             argv.append(t)
             i += 1
     args, _ = a.parse_known_args(argv)
+    args.tray = 0                   # the tray last measured (set by every detection)
+    args.relay_plan_pads = sorted(set(args.relay_plan_pad), reverse=True)
+    args.relay_plan_pad = args.relay_plan_pads[0]      # the one planned with right now
+    for o, v in TRAY_TYPES[args.tray_type].items():     # preset, unless given explicitly
+        f = '--' + o.replace('_', '-')
+        if not any(t == f or t.startswith(f + '=') for t in argv):
+            setattr(args, o, list(v) if isinstance(v, (list, tuple)) else v)
     if not args.spacing and args.gap:
         args.spacing = args.gap + args.tile_size
     # 'auto' / 'bot' values are resolved from the TurtleBot marker before planning
@@ -370,6 +430,8 @@ def main():
                  'shelf': ('TurtleBot -> shelf', app.act_bot_to_shelf),
                  'd11bot': ('D11 -> desk -> TurtleBot', app.act_d11_to_bot),
                  'botd11': ('TurtleBot -> desk -> D11', app.act_bot_to_d11),
+                 'deskbot': ('desk -> TurtleBot', app.act_desk_to_bot),
+                 'botdesk': ('TurtleBot -> desk', app.act_bot_to_desk),
                  'pick': ('pick', app.act_pick), 'pickplace': ('pick + place', app.act_pick_place)}
         if args.replay:
             app.submit('replay start', app.act_replay_start)

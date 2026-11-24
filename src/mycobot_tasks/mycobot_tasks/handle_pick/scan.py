@@ -7,6 +7,8 @@ import time
 import cv2
 import numpy as np
 
+from mycobot_tasks.handle_pick import trays as tr
+
 from mycobot_calibration.geometry import make_T, rot_z
 from mycobot_calibration.handeye_node import ARM_JOINTS
 from mycobot_tasks.red_cube_hover import CAM, LIMITS, SEEDS_J23, Stop, TCP, look_at, ray_plane
@@ -234,7 +236,7 @@ class ScanMixin:
             try:
                 with open(os.path.expanduser(a.save)) as f:
                     d = yaml.safe_load(f)
-                if int(d.get('tray', a.tray)) == a.tray:
+                if int(d.get('tray', 0)) in tr.TRAYS:
                     p = np.array(d['handle_xyz'], float)
             except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
                 p = None

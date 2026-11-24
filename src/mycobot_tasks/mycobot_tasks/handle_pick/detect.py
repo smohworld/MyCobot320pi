@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from mycobot_tasks.red_cube_hover import CAM, Stop, project
+from mycobot_tasks.handle_pick import trays as tr
 from mycobot_tasks.tray_handle import handle_from_markers
 
 
@@ -33,6 +34,7 @@ class DetectMixin:
                 raise Stop(f'no TF base -> {CAM}')
             found = self.mp.detect(img)
             self.last = (after, found)
+            self.lock_tray(found, img)
             r = handle_from_markers(found, self.id_l, self.id_r, T,
                                     (self.spacing or a.spacing or 0.054) if single else None)
             if r is None:
@@ -46,6 +48,33 @@ class DetectMixin:
             r['view'] = math.degrees(math.acos(min(1.0, abs(float(T[:3, 2] @ r['normal'])))))
             out.append(r)
         return out
+
+    def lock_tray(self, found, img):
+        """Several trays (trays.py): the first frame of a detection with an allowed tray in
+        view picks it (both markers, nearest the image centre); the rest of that detection
+        measures only this one (self.id_l / id_r, args.tray)."""
+        a = self.args
+        if self.tray_lock is not None:
+            return
+        t = tr.pick_tray(found, (img.shape[1], img.shape[0]))
+        if t is None:
+            return
+        self.tray_lock, a.tray = t, t
+        self.id_l, self.id_r = tr.ids_of(t)
+        self.say(f'tray {t} (markers {self.id_l} / {self.id_r}) in view: measuring it')
+
+    def tray_names(self):
+        if self.tray_lock is not None:
+            return f'tray {self.args.tray} markers ID {self.id_l} + {self.id_r}'
+        return (f'tray markers (trays 0-{tr.TRAY_COUNT - 1}: IDs {tr.ID_OFFSET}-'
+                f'{tr.ids_of(tr.TRAY_COUNT - 1)[1]})')
+
+    def check_tray(self):
+        """After a detection: the right tray (app.tray_check, trays.TrayCheck; today every
+        tray)? Else Stop (the relay then goes home with an ERROR)."""
+        why = self.tray_check.check(self.args.tray)
+        if why:
+            raise Stop(why)
 
     def view_problem(self, res, two):
         """Why the view is not good enough for the final measurement (None = good)."""
@@ -75,6 +104,7 @@ class DetectMixin:
         self.pin = None
         if self.holding:
             raise Stop('holding the tray: put it back first (b)')
+        self.tray_lock = None             # any allowed tray again (lock_tray)
         if a.go and self.node.js.get('gripper_controller', 1.0) < 0.5:
             self.say('opening the gripper first: open fingers stay out of the camera view')
             self.gripper(True)
@@ -100,7 +130,7 @@ class DetectMixin:
                     tried_last = True
                     last = self.last_tray(region)
                     if last is not None:
-                        self.say(f'no tray {a.tray} markers here: looking at the last tray '
+                        self.say(f'no {self.tray_names()} here: looking at the last tray '
                                  f'position ({last[0] * 1000:.0f}, {last[1] * 1000:.0f}) mm first')
                         if self.look_last(last, region):
                             continue
@@ -110,12 +140,12 @@ class DetectMixin:
                     continue
                 if a.track and scan and attempt < a.recenter:
                     nxt = scan.pop(0)
-                    self.say(f'no tray {a.tray} markers: scanning ({nxt[0] * 1000:.0f}, '
+                    self.say(f'no {self.tray_names()}: scanning ({nxt[0] * 1000:.0f}, '
                              f'{nxt[1] * 1000:.0f}) mm')
                     self.track_to(nxt)
                     continue
                 seen = sorted(self.last[1]) if self.last else []
-                raise Stop(f'tray {a.tray} markers ID {self.id_l} + {self.id_r} not seen '
+                raise Stop(f'{self.tray_names()} not seen '
                            f'({len(res)} of {a.frames} frames, IDs seen: {seen})')
             why = self.view_problem(res, two)
             if why is None:

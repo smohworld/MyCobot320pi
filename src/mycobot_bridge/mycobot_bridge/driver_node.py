@@ -78,6 +78,16 @@ class TrajJob:
         self.err0_vec = None          # same, per joint (target - actual) [deg]
         self.bias = np.zeros(6)       # feedforward added to every command [deg]
         self.settle_mode = 'precise'  # driver settle_mode when the trajectory was accepted
+        # tracking while the trajectory runs: planned (at the reading time) - actual [deg]
+        self.trk_max = np.zeros(6)
+        self.trk_sq = np.zeros(6)
+        self.trk_n = 0
+        self.trk_t_max = 0.0          # trajectory time of the largest error (any joint) [s]
+        # off the path: actual - its nearest point on the whole planned path (lagging along
+        # the path is not counted: what matters for collisions) [deg]
+        self.off_max = np.zeros(6)    # per joint, at the worst sample
+        self.off_norm = 0.0           # largest |actual - nearest path point| [deg]
+        self.off_t = 0.0
 
     @property
     def duration(self):
@@ -208,6 +218,10 @@ class MyCobotDriver(Node):
         # hold_log_csv: quantifies the shake after arriving. '' = off.
         self.hold_log = os.path.expanduser(p('hold_log_csv', '').value)
         self.hold_log_s = p('hold_log_s', 2.0).value
+        # track_log_csv: one row per trajectory, how far the joints lag / are off the
+        # trajectory WHILE it runs (planned at the reading time - actual), with the
+        # connection (fake / socket / serial) so simulation and real runs stay apart. '' = off.
+        self.track_log = os.path.expanduser(p('track_log_csv', '').value)
         self._hold = None
         if self.ff_bias.shape != (6,) or self.ff_dir.shape != (6,):
             raise ValueError('ff_bias_deg and ff_dir_deg must be 6 values')
@@ -444,6 +458,8 @@ class MyCobotDriver(Node):
                 if q is not None:
                     self._q, self._q_t = q, time.monotonic()
                     self._hold_sample(q)
+                    if executing:
+                        self._track_sample(traj, q, self._q_t)
                     if self._read_fails or self._stale_logged:
                         self.get_logger().info(
                             f'get_angles recovered after {self._read_fails} failed reads')
@@ -552,6 +568,65 @@ class MyCobotDriver(Node):
         cmd = np.clip(cmd, ref - self.max_corr, ref + self.max_corr)
         return np.clip(cmd, np.minimum(self.j_min, ref), np.maximum(self.j_max, ref))
 
+    def _track_sample(self, job, q, t_read):
+        """While the trajectory runs (not the settling after it): planned - actual."""
+        if job.t_start is None:
+            return
+        t = t_read - job.t_start
+        if t < 0.0 or t > job.duration:
+            return
+        q = np.asarray(q, float)
+        e = np.abs(job.sample(t) - q)
+        if float(e.max()) > float(job.trk_max.max()):
+            job.trk_t_max = t
+        job.trk_max = np.maximum(job.trk_max, e)
+        job.trk_sq += e ** 2
+        job.trk_n += 1
+        # nearest point on the planned path (joint-space polyline)
+        P = job.positions
+        if len(P) > 1:
+            A, D = P[:-1], np.diff(P, axis=0)
+            L2 = np.maximum(np.einsum('ij,ij->i', D, D), 1e-12)
+            u = np.clip(np.einsum('ij,ij->i', q - A, D) / L2, 0.0, 1.0)
+            dev = q - (A + u[:, None] * D)
+        else:
+            dev = (q - P[0])[None, :]
+        k = int(np.argmin(np.einsum('ij,ij->i', dev, dev)))
+        n = float(np.linalg.norm(dev[k]))
+        if n > job.off_norm:
+            job.off_norm, job.off_max, job.off_t = n, np.abs(dev[k]), t
+
+    def _log_track(self, job):
+        if not self.track_log or job.trk_n == 0:
+            return
+        dt = np.diff(job.times)
+        dq = np.abs(np.diff(job.positions, axis=0))
+        vmax = (np.max(dq / np.maximum(dt, 1e-3)[:, None], axis=0) if len(dt)
+                else np.zeros(6))
+        try:
+            head = (['time', 'connection', 'duration_s', 'samples', 't_max_s', 'corrections',
+                     'off_norm', 'off_t_s']
+                    + [f'{k}{j}' for k in ('max', 'rms', 'off', 'vmax', 'start', 'final')
+                       for j in range(1, 7)])
+            if os.path.exists(self.track_log):          # older columns: kept aside
+                with open(self.track_log) as f:
+                    first = f.readline().strip().split(',')
+                if first != head:
+                    os.replace(self.track_log, self.track_log + '.v1')
+            new = not os.path.exists(self.track_log)
+            with open(self.track_log, 'a', newline='') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(head)
+                w.writerow([f'{time.time():.2f}', self.connection, f'{job.duration:.2f}',
+                            job.trk_n, f'{job.trk_t_max:.2f}', job.corrections,
+                            f'{job.off_norm:.3f}', f'{job.off_t:.2f}']
+                           + [f'{v:.3f}' for v in np.concatenate([
+                               job.trk_max, np.sqrt(job.trk_sq / job.trk_n), job.off_max, vmax,
+                               job.positions[0], job.positions[-1]])])
+        except OSError as e:
+            self.get_logger().warn(f'track_log_csv write failed: {e}')
+
     def _log_ff(self, job):
         if not self.ff_log or job.err0_vec is None or self._q is None:
             return
@@ -606,6 +681,12 @@ class MyCobotDriver(Node):
 
     def _finish_goal(self, job, emax, timeout=False):
         self._log_ff(job)
+        self._log_track(job)
+        if job.trk_n:
+            self.get_logger().info(
+                f'tracking while moving ({job.duration:.1f} s): max |planned - actual| J1..J6 = '
+                + ' '.join(f'{v:.1f}' for v in job.trk_max) + f' deg (at {job.trk_t_max:.1f} s); '
+                f'off the path max {job.off_norm:.2f} deg (at {job.off_t:.1f} s)')
         if self.hold_log and self._q is not None:
             final = job.positions[-1]
             self._hold = {'t0': time.monotonic(), 'final': np.array(final, float),

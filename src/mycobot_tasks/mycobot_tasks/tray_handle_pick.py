@@ -69,6 +69,7 @@ Relay over the desk (handle_pick/relay.py), shelf D11 <-> TurtleBot:
 
 Window: p pick (any height)   d detect (any height)   m pick + place
         k TurtleBot -> shelf   n D11 -> TurtleBot   j TurtleBot -> D11
+        e desk -> TurtleBot   r TurtleBot -> desk (--relay-desk)
         s search pose   b put the tray back where p picked it
         Enter next step   a auto / step mode   x / SPACE stop   q quit
   d / p: the tray is looked for from here (then the last position, the shelf region, the

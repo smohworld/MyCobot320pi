@@ -12,6 +12,7 @@ from mycobot_tasks.red_cube_hover import App, Stop
 from mycobot_tasks import regions as rg
 from mycobot_tasks.tray_handle import ID_OFFSET, MarkerPose
 from mycobot_tasks.handle_pick.base import BaseApp
+from mycobot_tasks.handle_pick.relay import CLOSED
 from mycobot_tasks.handle_pick.bot import BotMixin
 from mycobot_tasks.handle_pick.detect import DetectMixin
 from mycobot_tasks.handle_pick.plan import PlanMixin
@@ -49,8 +50,10 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             self.load_replay()
         self.mp = MarkerPose(self.K, self.D, args.marker_size)
         self.bot_mp = MarkerPose(self.K, self.D, args.bot_marker_size)
-        self.id_l = ID_OFFSET + 2 * args.tray
-        self.id_r = self.id_l + 1
+        from mycobot_tasks.handle_pick import trays as tr
+        self.id_l, self.id_r = tr.ids_of(args.tray)
+        self.tray_lock = None             # the tray one detection measures (detect_pin)
+        self.tray_check = tr.TrayCheck()  # wrong-tray check (later; today all ok)
         self._settle_now = None           # driver settle_mode last set (driver_settle)
         self._settle_cli = None
 
@@ -144,6 +147,8 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
         if line:
             v = a.lin_velocity if velocity is None else velocity
             acc = a.lin_accel
+        k = self.sim_speed()                 # --sim-speed (simulation only)
+        v, acc = min(1.0, v * k), min(1.0, acc * k)
         ok, msg = self.mv.move_joints(ARM_JOINTS, q, v, acc, planner=kind)
         if not ok and line and msg == 'PLANNING_FAILED':
             # near a stretched arm a constant TCP speed needs fast joints: Pilz refuses
@@ -203,6 +208,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
         keep = a.table_z
         try:
             pin = self.detect_any()
+            self.check_tray()
             plan = self.plan_pick(pin['p'][:2], pin['yaw'] + math.radians(a.grip_yaw_offset))
             self.say(f'pick plan OK: above / approach / grasp / lift, tool yaw '
                      f'{math.degrees(plan["tcp_yaw"]):.0f} deg, surface z '
@@ -262,6 +268,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             if a.shelf_yaw is not None:
                 a.place_yaw = a.shelf_yaw
         pin = self.detect_pin()
+        self.check_tray()
         xy = pin['p'][:2].copy()
         if self.wants_bot() and self.bot is not None and \
                 np.linalg.norm(xy - self.bot['place_xy']) < a.on_bot_r and \
@@ -298,14 +305,8 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
         q_start = self.node.q()
 
         def back(why):
-            """The arm (empty) back where n started, then the error."""
-            if a.go and q_start is not None:
-                self.say(f'{why.splitlines()[0]}: back to the start pose')
-                try:
-                    self.relay_go_to(q_start, 'back to the start pose')
-                except Stop as e:
-                    why += f'\n  (back to the start pose failed: {e})'
-            raise Stop(why)
+            """ERROR, the arm (empty) back to home (else where n started), then the error."""
+            self.relay_fail_home(why, q_start)
         try:
             self.relay_setup()
             self.relay_clear()
@@ -328,6 +329,10 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
                     if self._abort.is_set():
                         raise
                     back(f'tray on D11 not measured: {e}')
+                try:
+                    self.check_tray()
+                except Stop as e:
+                    back(str(e))
                 d11 = dict(h=np.array(pin['p'], float), lr=float(pin['yaw']))
             try:
                 A = self.relay_plan_a(d11)
@@ -353,6 +358,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
                 bot = self.relay_bot_place()
             q_now = self.node.q() if a.go else A['q_up']
             try:
+                bot['h'] = self.relay_check_box_r(bot['h'], 'TurtleBot box', place=True)
                 B = self.relay_plan_b(A, bot, q_now)
                 self.relay_summary(B['steps'], 'desk -> TurtleBot')
                 self.relay_verify(B['steps'], 'desk -> TurtleBot')
@@ -365,8 +371,140 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
                 if a.go:          # the tray on the desk stays an obstacle
                     self._scene(world=[self._tray_world(A['q_rel'])])
             self.relay_run(B['steps'])
-            self._remove_world('relay_tray')
             self.say('tray on the TurtleBot' + ('' if a.go else ' (dry run)'))
+            self.relay_home(CLOSED)              # closed over the box (last step)
+            self._remove_world('relay_tray')
+        finally:
+            a.table_z = keep
+
+    def _relay_desk_tray(self):
+        """The tray standing on the desk: --layout-poses (simulation) -> --relay-desk or None
+        (the planner picks a desk spot); else measured with the camera from here (d) and
+        checked to stand on the desk."""
+        a = self.args
+        if a.layout_poses:
+            return self.relay_desk_cands()[0] if a.relay_desk else None
+        pin = self._detect_at_desk_spots()
+        self.check_tray()
+        d = dict(h=np.array(pin['p'], float), lr=float(pin['yaw']))
+        dz = float(d['h'][2]) - a.tray_height - self._desk_geo[3]
+        if abs(dz) > 0.02:
+            raise Stop(f'the tray seen stands {dz * 1000:+.0f} mm off the desk top: not on '
+                       'the desk (or wrong --tray-height / --tray-type)')
+        return d
+
+    def _detect_at_desk_spots(self):
+        """e: the tray looked for ONLY at the desk spot(s) (--relay-desk, else --relay-spots,
+        else the first automatic one): camera over each, measured there (small scan around
+        it, --scan-step); none there -> Stop (the caller goes home with an ERROR)."""
+        a = self.args
+        if a.relay_desk:
+            spots = [tuple(a.relay_desk[:2])]
+        elif a.relay_spots:
+            spots = [tuple(s) for s in a.relay_spots]
+        else:
+            spots = [tuple(d['h'][:2]) for d in self.relay_desk_cands()[:1]]
+        z = self._desk_geo[3]
+        keep = (a.search_x, a.search_y, a.use_last)
+        why = []
+        try:
+            for x, y in spots:
+                a.search_x, a.search_y, a.use_last, a.table_z = x, y, False, z
+                self.say(f'camera over the desk spot ({x * 1000:.0f}, {y * 1000:.0f}) mm')
+                if a.go:
+                    self.look_over(x, y, z, 'desk spot')
+                try:
+                    return self.detect_pin(region='desk')   # no such region: no wide scan
+                except Stop as e:
+                    if self._abort.is_set():
+                        raise
+                    why.append(f'({x * 1000:.0f}, {y * 1000:.0f}) mm: {str(e).splitlines()[0]}')
+        finally:
+            a.search_x, a.search_y, a.use_last = keep
+        raise Stop('no tray at the desk spot(s) (--relay-spots / --relay-desk):\n  '
+                   + '\n  '.join(why))
+
+    def act_desk_to_bot(self):
+        """e: desk -> TurtleBot (the second part of n alone): the tray on the desk measured
+        (camera, from here), the TurtleBot marker measured, desk -> TurtleBot planned (tray
+        turned far from the arm base when needed) and run. No plan: nothing moves, error."""
+        a = self.args
+        if self.holding:
+            raise Stop('holding the tray: put it down first')
+        keep = a.table_z
+        q_start = self.node.q()
+        try:
+            self.relay_setup()
+            self.relay_clear()
+            self._desk_geo = self._desk()
+            try:
+                desk = self._relay_desk_tray()
+                if a.layout_poses:
+                    bot = self.relay_layout()['bot_place']
+                else:
+                    self.find_bot()
+                    bot = self.relay_bot_place()
+                bot['h'] = self.relay_check_box_r(bot['h'], 'TurtleBot box', place=True)
+                q_from = self.node.q()
+                if q_from is None:
+                    raise Stop('no joint_states')
+                A, B = self.relay_plan_desk(bot, q_from, desk)
+                steps = B['steps']
+                self.relay_summary(steps, 'desk -> TurtleBot')
+                self.relay_verify(steps, 'desk -> TurtleBot')
+            except Stop as e:
+                self.relay_fail_home(str(e), q_start)
+            self.relay_start_tray(steps)
+            self.relay_run(steps)
+            self.say('tray on the TurtleBot' + ('' if a.go else ' (dry run)'))
+            self.relay_home(CLOSED)              # closed over the box (last step)
+            self._remove_world('relay_tray')
+        finally:
+            a.table_z = keep
+
+    def act_bot_to_desk(self):
+        """r: TurtleBot -> desk: the tray in the box measured (camera), put on the desk at
+        --relay-desk (else the planner picks a desk spot: --relay-spot-r, at most
+        --relay-max-spots tried); planned as desk -> TurtleBot and run backwards."""
+        a = self.args
+        if self.holding:
+            raise Stop('holding the tray: put it down first')
+        keep = a.table_z
+        q_start = self.node.q()
+        try:
+            self.relay_setup()
+            self.relay_clear()
+            self._desk_geo = self._desk()
+            try:
+                if a.layout_poses:
+                    bot = self.relay_layout()['bot_tray']
+                else:
+                    pin = self.measure_tray_on_bot()
+                    self.check_tray()
+                    bot = dict(h=np.array(pin['p'], float), lr=float(pin['yaw']))
+                self.relay_check_box_r(bot['h'], 'tray in the TurtleBot box')
+                q_from = self.node.q()
+                if q_from is None:
+                    raise Stop('no joint_states')
+                A, B = self.relay_plan_desk(bot, q_from)
+                steps = self.relay_reverse(B['steps'])
+                if steps[-1][0] == 'fingers':     # back at the start closed: no opening there
+                    steps = steps[:-1]
+                self.relay_summary(steps, 'TurtleBot -> desk')
+                self.relay_verify(steps, 'TurtleBot -> desk')
+            except Stop as e:
+                self.relay_fail_home(str(e), q_start)
+            self.relay_start_tray(steps)
+            first = next(d for k, d, _ in steps if k == 'traj')[0]
+            self.confirm('to the start over the TurtleBot box (fingers closed)')
+            if a.go:
+                self.relay_go_to(first, 'over the TurtleBot box (fingers closed)', grip=CLOSED)
+            self.relay_run(steps)
+            s = A['spot']
+            self.say(f'tray on the desk at ({s[0] * 1000:.0f}, {s[1] * 1000:.0f}) mm'
+                     + ('' if a.go else ' (dry run)'))
+            self.relay_home(CLOSED)
+            self._remove_world('relay_tray')
         finally:
             a.table_z = keep
 
@@ -378,30 +516,37 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
         if self.holding:
             raise Stop('holding the tray: put it down first')
         keep = a.table_z
+        q_start = self.node.q()
         try:
             self.relay_setup()
             self.relay_clear()
-            if a.layout_poses:
-                lp = self.relay_layout()
-                bot, d11 = lp['bot_tray'], lp['d11']
-            else:
-                pin = self.measure_tray_on_bot()
-                bot = dict(h=np.array(pin['p'], float), lr=float(pin['yaw']))
-                d11 = self.relay_d11_file()
-            self.say(f'D11 (must be empty): handle to ({d11["h"][0] * 1000:.0f}, '
-                     f'{d11["h"][1] * 1000:.0f}, {d11["h"][2] * 1000:.0f}) mm ({a.relay_d11})')
-            A, B = self.relay_plan(d11, bot)
-            steps = self.relay_reverse(A['steps'] + B['steps'])
-            self.relay_summary(steps, 'TurtleBot -> D11')
-            self.relay_verify(steps, 'TurtleBot -> D11')
+            try:
+                if a.layout_poses:
+                    lp = self.relay_layout()
+                    bot, d11 = lp['bot_tray'], lp['d11']
+                else:
+                    pin = self.measure_tray_on_bot()
+                    self.check_tray()
+                    bot = dict(h=np.array(pin['p'], float), lr=float(pin['yaw']))
+                    d11 = self.relay_d11_file()
+                self.say(f'D11 (must be empty): handle to ({d11["h"][0] * 1000:.0f}, '
+                         f'{d11["h"][1] * 1000:.0f}, {d11["h"][2] * 1000:.0f}) mm ({a.relay_d11})')
+                self.relay_check_box_r(bot['h'], 'tray in the TurtleBot box')
+                A, B = self.relay_plan(d11, bot)
+                steps = self.relay_reverse(A['steps'] + B['steps'])
+                self.relay_summary(steps, 'TurtleBot -> D11')
+                self.relay_verify(steps, 'TurtleBot -> D11')
+            except Stop as e:
+                self.relay_fail_home(str(e), q_start)
             self.relay_start_tray(steps)
             first = next(d for k, d, _ in steps if k == 'traj')[0]
-            self.confirm('to the start over the TurtleBot box')
+            self.confirm('to the start over the TurtleBot box (fingers closed)')
             if a.go:
-                self.relay_go_to(first, 'over the TurtleBot box')
+                self.relay_go_to(first, 'over the TurtleBot box (fingers closed)', grip=CLOSED)
             self.relay_run(steps)
-            self._remove_world('relay_tray')
             self.say('tray on D11' + ('' if a.go else ' (dry run)'))
+            self.relay_home(CLOSED)              # the way out of the shelf ends closed
+            self._remove_world('relay_tray')
         finally:
             a.table_z = keep
 

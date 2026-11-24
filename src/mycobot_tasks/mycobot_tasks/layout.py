@@ -21,6 +21,11 @@ Handles (base frame; the robot base stays at the origin, the rest moves around i
   shelf     base plate centre on the floor: drag / turn (place_scene --shelf, corner kept)
   fork      on the D11 fork top: red = X axis (--shelf-x, +-97 mm), green = fork out (--fork-y,
             0..160), blue = fork height (--fork-top, 263..616 mm over the floor)
+  tray      yellow box over D11: the tray on the fork (drag / turn; +-5 cm, +-20 deg off the
+            fork centre): the exported tray file follows (layout_tray.yaml)
+  lock      right click > lock / unlock desk + shelf: the desk, shelf and fork handles (and
+            the robot ring) stop moving; the robot handle then moves the robot across the
+            desk (y) instead; the tray on D11 and the TurtleBot stay movable
   right click: D11 height (desk top / lowest / highest), tray direction on D11, show the
             tray, arm (simulation): go above D11 / the TurtleBot box / back to the start
             pose (fake driver only; --above sets the height), snap yaw, reset.
@@ -66,7 +71,10 @@ FORK_Y = (0.0, 0.16)
 DEFAULTS = dict(desk_x=[-1.0344, 0.0656], edge_y=-0.5062, robot_yaw=-0.0418,
                 shelf=[0.36, 0.11, 90.0], with_shelf=True, shelf_x=-0.097, fork_top=0.263,
                 fork_y=0.0, with_bot=True, bot=[0.2155, -0.0449, 180.0], tray_yaw_off=90.0,
-                show_tray=False)
+                show_tray=False, locked=False, tray_dx=0.0, tray_dy=0.0, tray_dyaw=0.0)
+# not place_scene options, kept in the layout file too
+EXTRA_KEYS = ('tray_yaw_off', 'show_tray', 'locked', 'tray_dx', 'tray_dy', 'tray_dyaw')
+TRAY_OFF_MAX, TRAY_DYAW_MAX = 0.05, 20.0      # tray on D11: off the fork centre [m], [deg]
 
 
 def clamp(v, lo, hi):
@@ -121,15 +129,17 @@ class Layout:
         return [x, y, math.degrees(math.atan2(y, x))]
 
     def args(self, with_tray=None):
-        a = ps.parse([])
+        a = ps.parse(SCENE_EXTRA)
         for k in ps.LAYOUT_KEYS:
             setattr(a, k, self.v[k])
         a.with_tray = self.v['show_tray'] if with_tray is None else with_tray
+        a.tray_dx = self.v['tray_dx']                    # the tray off the D11 centre
+        a.tray_y = ps.parse([]).tray_y + self.v['tray_dy']
         return a
 
     def save(self):
         out = {k: self.v[k] for k in ps.LAYOUT_KEYS}
-        out.update(tray_yaw_off=self.v['tray_yaw_off'], show_tray=self.v['show_tray'])
+        out.update({k: self.v[k] for k in EXTRA_KEYS})
         out = {k: ([round(float(t), 4) for t in v] if isinstance(v, list) else
                    (round(v, 4) if isinstance(v, float) else v)) for k, v in out.items()}
         tmp = self.path + '.tmp'
@@ -200,6 +210,37 @@ class Layout:
         self.v['fork_y'] = clamp(Y - D11_Y, *FORK_Y)
         self.v['fork_top'] = clamp(z - self.floor, ps.FORK_TOP[0] / 1000, ps.FORK_TOP[1] / 1000)
 
+    def desk_y_axis(self):
+        """The desk's y axis (across the desk) in base."""
+        return ps.rot(-math.radians(self.v['robot_yaw']), 0.0, 1.0)
+
+    def shift_robot(self, d):
+        """The robot moved d along the desk y axis (desk, shelf and TurtleBot stay in the
+        room): in the base frame they all move by -d."""
+        ux, uy = self.desk_y_axis()
+        self.v['edge_y'] -= d
+        x, y = self.plate_centre()
+        self.set_plate_centre(x - d * ux, y - d * uy, self.v['shelf'][2])
+        bx, by, byaw = self.v['bot']
+        self.v['bot'] = [bx - d * ux, by - d * uy, byaw]
+
+    def tray_pose(self):
+        """The tray handle on D11 (base xyz of the handle midpoint at the fork top) and its
+        L -> R yaw [rad]: the fork centre + (tray_dx, tray_dy) in the shelf frame."""
+        fx, fy, fz = self.fork_point()
+        dx, dy = ps.rot(math.radians(self.v['shelf'][2]), self.v['tray_dx'], self.v['tray_dy'])
+        yaw = math.radians(self.v['shelf'][2] + self.v['tray_yaw_off'] + self.v['tray_dyaw'])
+        return fx + dx, fy + dy, fz, math.remainder(yaw, 2 * math.pi)
+
+    def set_tray(self, x, y, yaw_deg):
+        fx, fy, _ = self.fork_point()
+        X, Y = self.base_to_shelf(x, y)
+        Xf, Yf = self.base_to_shelf(fx, fy)
+        m = TRAY_OFF_MAX
+        self.v['tray_dx'], self.v['tray_dy'] = clamp(X - Xf, -m, m), clamp(Y - Yf, -m, m)
+        d = math.remainder(yaw_deg - self.v['shelf'][2] - self.v['tray_yaw_off'], 360.0)
+        self.v['tray_dyaw'] = clamp(d, -TRAY_DYAW_MAX, TRAY_DYAW_MAX)
+
     def box_floor_z(self):
         return self.floor + self.base.box_floor
 
@@ -218,7 +259,9 @@ class Layout:
                 f"{self.v['fork_top'] * 1000:.0f} mm over the floor, fork out "
                 f"{self.v['fork_y'] * 1000:.0f} mm\n"
                 f"D11 top ({fx:+.3f}, {fy:+.3f}, {fz:+.3f}), {math.hypot(fx, fy) * 100:.0f} cm "
-                f"from the base axis")
+                f"from the base axis; tray on it {self.v['tray_dx'] * 1000:+.0f} / "
+                f"{self.v['tray_dy'] * 1000:+.0f} mm (shelf X / Y), yaw "
+                f"{self.v['tray_dyaw']:+.0f} deg" + ('; desk + shelf LOCKED' if self.v['locked'] else ''))
 
     def sync_regions(self, path):
         """The search regions (regions.yaml, `regions` node in RViz) follow the layout: the
@@ -245,21 +288,20 @@ class Layout:
         rg.save(regions, path)
         return True
 
-    def export(self, tray_height=0.072):
+    def export(self, tray_height=0.076):
         """Replay / region files for tray_handle_pick (see the module doc)."""
         fx, fy, fz = self.fork_point()
+        tx, ty, _, tray_yaw = self.tray_pose()
         bx, by, byaw = self.v['bot']
         bz = self.box_floor_z()
         stamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        tray_yaw = math.remainder(math.radians(self.v['shelf'][2] + self.v['tray_yaw_off']),
-                                  2 * math.pi)
 
         def det(x, y, surface, yaw):
             return dict(stamp=stamp, tray=0, handle_xyz=[x, y, surface + tray_height],
                         yaw_lr_deg=math.degrees(yaw), spacing=0.054, tilt_deg=0.0,
                         table_z=surface, camera_q_deg=None)
         files = {
-            'tray': det(fx, fy, fz, tray_yaw),
+            'tray': det(tx, ty, fz, tray_yaw),
             'tray_bot': det(bx, by, bz, math.radians(byaw)),
             'bot': dict(stamp=stamp, marker_id=0, marker_xyz=[bx, by, bz], yaw_deg=byaw,
                         tilt_deg=0.0),
@@ -299,6 +341,24 @@ def preset_path(name, folder=PRESETS):
     return os.path.join(os.path.expanduser(folder), f'{name}.yaml')
 
 
+# extra place_scene options not kept in the layout file (e.g. --rack-trays), from
+# --scene-args: the layout node re-sends the scene on every change and removes the objects
+# it does not build, so it needs the same options as place_scene
+SCENE_EXTRA = []
+
+
+def scene_extra(text):
+    import shlex
+    t, out, i = shlex.split(text), [], 0
+    while i < len(t):
+        if t[i] == '--layout':                  # the layout file is this node's own
+            i += 2 if i + 1 < len(t) and not t[i + 1].startswith('-') else 1
+            continue
+        out.append(t[i])
+        i += 1
+    return out
+
+
 def yaw_of(q):
     return math.degrees(2 * math.atan2(q.z, q.w))
 
@@ -316,7 +376,7 @@ def main():
                    help='save the layout (--file) as NAME in --presets and exit (no ROS); '
                         'RViz menu: layouts > save as ...')
     p.add_argument('--list', action='store_true', help='list the saved layouts and exit')
-    p.add_argument('--tray-height', type=float, default=0.072,
+    p.add_argument('--tray-height', type=float, default=0.076,
                    help='tray bottom -> handle top for the exported tray files [m]')
     p.add_argument('--frame', default='base')
     p.add_argument('--above', type=float, default=0.04,
@@ -332,8 +392,13 @@ def main():
                         'off the target)')
     p.add_argument('--real', action='store_true',
                    help="allow the 'arm' menu to move a real (non-fake) robot")
+    p.add_argument('--scene-args', default='',
+                   help='place_scene options beyond the layout file, as one string, e.g. '
+                        '"--rack-trays" (handeye.launch.py passes its scene_args)')
     args = p.parse_args(sys.argv[1:] if '--ros-args' not in sys.argv
                         else sys.argv[1:sys.argv.index('--ros-args')])
+    global SCENE_EXTRA
+    SCENE_EXTRA = scene_extra(args.scene_args)
     if args.list:
         for n in presets(args.presets):
             print(f'{n:30s} {time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(preset_path(n, args.presets))))}')
@@ -442,13 +507,16 @@ def main():
         m.points = [Point(), Point(x=length)]
         return m
 
-    def planar(name, x, y, z, yaw_deg, desc, vis, scale):
+    def planar(name, x, y, z, yaw_deg, desc, vis, scale, fixed=False):
         im = InteractiveMarker()
         im.header.frame_id = args.frame
-        im.name, im.description, im.scale = name, desc, scale
+        im.name, im.description, im.scale = name, desc + ('  [locked]' if fixed else ''), scale
         im.pose.position.x, im.pose.position.y, im.pose.position.z = x, y, z
         im.pose.orientation.z = math.sin(math.radians(yaw_deg) / 2)
         im.pose.orientation.w = math.cos(math.radians(yaw_deg) / 2)
+        if fixed:                                # shown, not movable (menu still works)
+            im.controls.append(control('show', InteractiveMarkerControl.BUTTON, UP, vis))
+            return im
         im.controls.append(control('move', InteractiveMarkerControl.MOVE_PLANE, UP, vis))
         im.controls.append(control('turn', InteractiveMarkerControl.ROTATE_AXIS, UP))
         return im
@@ -467,6 +535,10 @@ def main():
         im.pose.orientation.z = math.sin(math.radians(yd) / 2)
         im.pose.orientation.w = math.cos(math.radians(yd) / 2)
         pad = flat((1.0, 0.55, 0.1), 0.10, 0.14, a=0.6, h=0.004)
+        if L.v['locked']:
+            im.description += '  [locked]'
+            im.controls.append(control('pad', InteractiveMarkerControl.BUTTON, (1, 0, 0, 0), [pad]))
+            return im
         im.controls.append(control('pad', InteractiveMarkerControl.NONE, (1, 0, 0, 0), [pad]))
         im.controls.append(control('shelf_x', InteractiveMarkerControl.MOVE_AXIS, (1, 0, 0, 0)))
         im.controls.append(control('fork_y', InteractiveMarkerControl.MOVE_AXIS,
@@ -485,11 +557,27 @@ def main():
         im.pose.position.z = L.base.table_z + L.base.mount_up + 0.01
         im.pose.orientation.z = math.sin(math.radians(yd) / 2)
         im.pose.orientation.w = math.cos(math.radians(yd) / 2)
+        if L.v['locked']:     # desk + shelf fixed: only the robot's place across the desk
+            im.description = (f"robot: drag along the desk y (desk + shelf locked; robot "
+                              f"{-L.v['edge_y'] * 1000:.0f} mm from the desk -y edge)")
+            im.controls.append(control('shift_y', InteractiveMarkerControl.MOVE_AXIS,
+                                       (0.7071068, 0.0, 0.0, 0.7071068),
+                                       [arrow((0.9, 0.2, 0.2), 0.16)]))
+            return im
         im.controls.append(control('turn', InteractiveMarkerControl.ROTATE_AXIS, UP,
                                    [arrow((0.9, 0.2, 0.2), 0.16)]))
         return im
 
-    def publish(which=('robot', 'desk', 'bot', 'shelf', 'fork')):
+    def tray_marker():
+        x, y, z, yaw = L.tray_pose()
+        r = math.hypot(x, y)
+        return planar('tray', x, y, z + args.tray_height + 0.01, math.degrees(yaw),
+                      f"tray on D11  X {L.v['tray_dx'] * 1000:+.0f}  Y "
+                      f"{L.v['tray_dy'] * 1000:+.0f} mm  yaw {L.v['tray_dyaw']:+.0f}  r "
+                      f"{r * 100:.1f} cm", [flat((1.0, 0.9, 0.15), 0.10, 0.15, a=0.5),
+                                            arrow((1.0, 0.9, 0.15), 0.08)], 0.2)
+
+    def publish(which=('robot', 'desk', 'bot', 'shelf', 'fork', 'tray')):
         if 'robot' in which:
             server.insert(robot_marker(), feedback_callback=feedback)
         if 'desk' in which:
@@ -497,7 +585,8 @@ def main():
             server.insert(planar('desk', x, y, L.base.table_z + 0.015, yd,
                                  f"desk (robot at its front end)  yaw {yd:+.1f}",
                                  [flat((0.6, 0.45, 0.25), 0.10, 0.10, cyl=True),
-                                  arrow((0.6, 0.45, 0.25))], 0.3), feedback_callback=feedback)
+                                  arrow((0.6, 0.45, 0.25))], 0.3, fixed=L.v['locked']),
+                          feedback_callback=feedback)
         if 'bot' in which:
             bx, by, byaw = L.v['bot']
             server.insert(planar('bot', bx, by, L.box_floor_z() + 0.25, byaw,
@@ -509,10 +598,12 @@ def main():
             server.insert(planar('shelf', x, y, L.floor + 0.02, L.v['shelf'][2],
                                  f"shelf  yaw {L.v['shelf'][2]:+.0f}",
                                  [flat((0.1, 0.8, 0.2), 0.12, 0.12, cyl=True),
-                                  arrow((0.1, 0.8, 0.2), 0.12)], 0.45),
+                                  arrow((0.1, 0.8, 0.2), 0.12)], 0.45, fixed=L.v['locked']),
                           feedback_callback=feedback)
         if 'fork' in which:
             server.insert(fork_marker(), feedback_callback=feedback)
+        if 'tray' in which:
+            server.insert(tray_marker(), feedback_callback=feedback)
         for n in which:
             menu.apply(server, n)
         server.applyChanges()
@@ -522,8 +613,19 @@ def main():
         ev = fb.event_type
         if ev not in (InteractiveMarkerFeedback.POSE_UPDATE, InteractiveMarkerFeedback.MOUSE_UP):
             return
+        locked = L.v['locked']
+        if locked and n in ('desk', 'shelf', 'fork'):
+            return
         if ev == InteractiveMarkerFeedback.POSE_UPDATE:
-            if n == 'robot':                     # everything else turns about the base
+            if n == 'robot' and locked:          # across the desk: the rest moves the other way
+                ux, uy = L.desk_y_axis()
+                d = pose.position.x * ux + pose.position.y * uy
+                L.shift_robot(d - state.get('rd', 0.0))
+                state['rd'] = d
+                publish(('desk', 'bot', 'shelf', 'fork', 'tray'))
+            elif n == 'tray':
+                L.set_tray(pose.position.x, pose.position.y, yaw_of(pose.orientation))
+            elif n == 'robot':                   # everything else turns about the base
                 L.turn_world(yaw_of(pose.orientation) + L.v['robot_yaw'])
                 publish(('desk', 'bot', 'shelf', 'fork'))
             elif n == 'desk':
@@ -532,13 +634,16 @@ def main():
                 L.v['bot'] = [pose.position.x, pose.position.y, yaw_of(pose.orientation)]
             elif n == 'shelf':
                 L.set_plate_centre(pose.position.x, pose.position.y, yaw_of(pose.orientation))
-                publish(('fork',))               # the fork follows the shelf
+                publish(('fork', 'tray'))        # the fork (+ tray) follows the shelf
             elif n == 'fork':
                 L.set_fork(pose.position.x, pose.position.y, pose.position.z)
+                publish(('tray',))
             update_scene()
         else:                                    # MOUSE_UP: clamp / labels, scene, files
-            publish({'shelf': ('shelf', 'fork'), 'desk': ('desk', 'robot'),
-                     'robot': ('robot', 'desk', 'bot', 'shelf', 'fork')}.get(n, (n,)))
+            state['rd'] = 0.0
+            publish({'shelf': ('shelf', 'fork', 'tray'), 'desk': ('desk', 'robot'),
+                     'fork': ('fork', 'tray'),
+                     'robot': ('robot', 'desk', 'bot', 'shelf', 'fork', 'tray')}.get(n, (n,)))
             update_scene(force=True)
             store()
 
@@ -550,9 +655,19 @@ def main():
             store()
         return cb
 
+    def blocked(n):
+        if L.v['locked'] and n in ('robot', 'desk', 'shelf', 'fork'):
+            log.warn(f'{n}: desk + shelf are locked (right click > unlock first)')
+            return True
+        return False
+
     def snap(fb):
         n = fb.marker_name
-        if n == 'bot':
+        if blocked(n):
+            return
+        if n == 'tray':
+            L.v['tray_dyaw'] = 0.0
+        elif n == 'bot':
             L.v['bot'][2] = round(L.v['bot'][2] / 90) * 90.0
         elif n in ('shelf', 'fork'):
             x, y = L.plate_centre()
@@ -570,7 +685,11 @@ def main():
     def reset(fb):
         n = fb.marker_name
         d = L.defaults()
-        if n == 'robot':
+        if blocked(n):
+            return
+        if n == 'tray':
+            L.v.update(tray_dx=0.0, tray_dy=0.0, tray_dyaw=0.0)
+        elif n == 'robot':
             L.turn_world(L.v['robot_yaw'] - d['robot_yaw'])
         elif n == 'desk':
             L.v.update(desk_x=d['desk_x'], edge_y=d['edge_y'], robot_yaw=d['robot_yaw'])
@@ -583,15 +702,23 @@ def main():
         update_scene(force=True)
         store()
 
+    def guarded(cb):
+        def f(fb):
+            if not blocked('shelf'):
+                cb(fb)
+        return f
+
     menu = MenuHandler()
+    menu.insert('lock / unlock desk + shelf (robot y, tray on D11, TurtleBot stay movable)',
+                callback=setter(locked=lambda L_: not L_.v['locked']))
     hm = menu.insert('D11 height')
     lo, hi = ps.FORK_TOP[0] / 1000, ps.FORK_TOP[1] / 1000
     menu.insert('desk top height (arm reaches ~ here)', parent=hm,
-                callback=setter(fork_top=lambda L_: clamp(L_.base.desk_height, lo, hi)))
+                callback=guarded(setter(fork_top=lambda L_: clamp(L_.base.desk_height, lo, hi))))
     menu.insert(f'lowest {lo * 1000:.0f} mm over the floor', parent=hm,
-                callback=setter(fork_top=lo))
+                callback=guarded(setter(fork_top=lo)))
     menu.insert(f'highest {hi * 1000:.0f} mm over the floor', parent=hm,
-                callback=setter(fork_top=hi))
+                callback=guarded(setter(fork_top=hi)))
     tm = menu.insert('tray on D11: handle L->R')
     menu.insert('along the shelf X', parent=tm, callback=setter(tray_yaw_off=0.0))
     menu.insert('along the shelf Y (fork out)', parent=tm, callback=setter(tray_yaw_off=90.0))
@@ -695,9 +822,8 @@ def main():
         return lambda fb: threading.Thread(target=run, daemon=True).start()
 
     def d11_target():
-        x, y, z = L.fork_point()
-        return ((x, y), z + args.tray_height,
-                math.radians(L.v['shelf'][2] + L.v['tray_yaw_off']))
+        x, y, z, yaw = L.tray_pose()
+        return (x, y), z + args.tray_height, yaw
 
     def bot_target():
         bx, by, byaw = L.v['bot']

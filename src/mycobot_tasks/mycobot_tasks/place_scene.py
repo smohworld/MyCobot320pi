@@ -71,8 +71,9 @@ import threading
 
 
 SHELF_NAMES = ('shelf_base', 'shelf_xaxis', 'shelf_mast', 'shelf_fork', 'shelf_rack',
-               'shelf_tray')
-NAMES = ('desk', 'floor', 'desk_legs', 'robot_mount', 'turtlebot', 'bot_box') + SHELF_NAMES
+               'shelf_tray', 'shelf_stored')
+NAMES = ('desk', 'floor', 'desk_legs', 'robot_mount', 'turtlebot', 'bot_box',
+         'bot_box_walls') + SHELF_NAMES
 
 # Shelf geometry in the shelf frame [mm] (build guide; see the docstring for the frame).
 LEVELS = (262.0, 427.0, 592.0)                  # cell support tops over the floor (L1..L3)
@@ -210,6 +211,22 @@ def shelf_boxes(a):
             (tx - hx, tx + hx, ty - hy, ty + hy, F + hz[0], F + hz[1])]   # D31 handle arch
     if a.with_tray:
         b['shelf_tray'] = tray
+    if a.rack_trays:
+        # a tray (body + handle arch, as on the fork) in every storage cell: centred along X,
+        # standing on the cell ledges, front edge at the rack front (shelf Y 450) moved out
+        # toward the robot by --rack-tray-out (worst case for the arm in front of the rack);
+        # the L1 left hand-over cell stays empty
+        out = a.rack_tray_out * 1000
+        stored = []
+        for ci, (x0, x1) in enumerate(CELLS_X):
+            for li, lv in enumerate(LEVELS):
+                if ci == 0 and li == 0:
+                    continue
+                sx, sy = (x0 + x1) / 2, 450.0 - out + T['wid'] / 2
+                stored += [(sx - T['len'] / 2, sx + T['len'] / 2, sy - T['wid'] / 2,
+                            sy + T['wid'] / 2, lv, lv + T['h']),
+                           (sx - hx, sx + hx, sy - hy, sy + hy, lv + hz[0], lv + hz[1])]
+        b['shelf_stored'] = stored
     info = dict(F=F, tray=(tx, ty), handle_top=F + hz[1], cx=cx)
     return b, info
 
@@ -312,10 +329,13 @@ def build(a):
         L, W, t = a.box_inner[0], a.box_inner[1], a.wall + a.wall_margin
         hz = (rim - bottom) / 2 + bottom
         hh = rim - bottom
+        # the floor plate (what a tray stands on: tray_handle_pick lets the tray touch it)
+        # and the walls as separate objects (a wall contact is always a collision)
         objs['bot_box'] = [
             # floor plate + the support under it, down to the room floor
             (at(0, 0) + [(floor_z + bottom + a.wall) / 2],
-             [L + 2 * t, W + 2 * t, bottom + a.wall - floor_z], yaw),
+             [L + 2 * t, W + 2 * t, bottom + a.wall - floor_z], yaw)]
+        objs['bot_box_walls'] = [
             (at(+(L + t) / 2, 0) + [hz], [t, W + 2 * t, hh], yaw),                    # far wall
             (at(-(L + t) / 2, 0) + [hz], [t, W + 2 * t, hh], yaw),                    # near wall
             (at(0, +(W + t) / 2) + [hz], [L, t, hh], yaw),
@@ -419,7 +439,8 @@ def report(objs, info, a):
         if not 0 <= a.fork_y <= 0.16:
             print('WARNING: --fork-y outside 0..0.16')
         hits = box_hits(objs, [n for n in objs if n.startswith('shelf')],
-                        ['desk', 'desk_legs', 'robot_mount', 'turtlebot', 'bot_box'])
+                        ['desk', 'desk_legs', 'robot_mount', 'turtlebot', 'bot_box',
+                         'bot_box_walls'])
         if hits:
             print('WARNING: the shelf runs into ' + ', '.join(sorted(hits))
                   + ' -> move it (--shelf / layout)')
@@ -442,12 +463,14 @@ COLORS = {
     'robot_mount': (0.25, 0.25, 0.25, 1.0),   # dark grey
     'turtlebot': (0.15, 0.35, 0.95, 1.0),     # blue
     'bot_box': (0.55, 0.75, 1.0, 1.0),        # light blue
+    'bot_box_walls': (0.55, 0.75, 1.0, 1.0),
     'shelf_base': (0.25, 0.70, 0.35, 1.0),    # shelf: greens
     'shelf_xaxis': (0.10, 0.50, 0.20, 1.0),
     'shelf_mast': (0.40, 0.80, 0.45, 1.0),
     'shelf_rack': (0.20, 0.60, 0.30, 0.85),
     'shelf_fork': (1.0, 0.55, 0.10, 1.0),     # Z carriage / Y deck / D11: orange
     'shelf_tray': (1.0, 0.90, 0.15, 1.0),     # tray on D11: yellow
+    'shelf_stored': (0.95, 0.75, 0.2, 1.0),   # trays stored in the rack (--rack-trays)
 }
 
 
@@ -662,6 +685,12 @@ def make_parser():
                    help='tray centre - mast centre along the shelf X [m] (measure it)')
     s.add_argument('--with-tray', action='store_true',
                    help='also add the tray on the fork as a collision object (not for picking)')
+    s.add_argument('--rack-trays', action='store_true',
+                   help='a tray in every storage cell of the rack (all but the L1 left hand-over '
+                        'cell) as collision objects: the shelf full')
+    s.add_argument('--rack-tray-out', type=float, default=0.0,
+                   help='--rack-trays: their front edge this far out of the rack front toward '
+                        'the robot [m] (0 = flush with the rack front)')
     s.add_argument('--plate-t', type=float, default=0.012, help='base plate thickness [m]')
     s.add_argument('--plate-top', type=float, default=0.066,
                    help='moving plate top over the floor [m] (Z 184 mm - carriage 118 mm)')
