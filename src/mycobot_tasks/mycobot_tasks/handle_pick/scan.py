@@ -276,8 +276,3 @@ class ScanMixin:
 
     def tray_seen(self):
         return len(self.frames(2, single=True)) > 0
-
-    def act_find_tray(self):
-        """f: scan the shelf region from the start, then detect as d."""
-        self.scan_region('shelf', self.tray_seen)
-        self.detect_pin()

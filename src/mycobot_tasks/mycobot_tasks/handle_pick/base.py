@@ -7,7 +7,7 @@ import numpy as np
 
 from mycobot_calibration.geometry import make_T, rot_z
 from mycobot_calibration.handeye_node import ARM_JOINTS
-from mycobot_tasks.red_cube_hover import (App, CAM, DOWN, LIMITS, SEEDS_J23, Stop, TCP, look_at,
+from mycobot_tasks.red_cube_hover import (App, CAM, LIMITS, SEEDS_J23, Stop, TCP, look_at,
                                           ray_plane)
 
 
@@ -121,56 +121,6 @@ class BaseApp(App):
                     np.max(np.abs(q1 - q0)) < np.radians(tol_deg):
                 return
             q0 = q1
-
-    def ik_fixed(self, p, yaw, seed):
-        """TCP at p pointing down with exactly this yaw (the held tray must not turn).
-        The seed first; near the edge of the workspace (e.g. low below the desk) the solutions
-        are a narrow band, so other seeds are tried too and the one closest to the seed wins."""
-        T = make_T(rot_z(yaw) @ DOWN, p)
-        seed = np.asarray(seed, float)
-        ex = self.grip_state()
-        q = self.mv.compute_ik(T, TCP, ARM_JOINTS, seed, timeout=0.1, extra=ex)
-        if q is not None:
-            return np.asarray(q)
-        j1 = float(np.arctan2(p[1], p[0]))
-        seeds = [np.array([j1, j2, j3, 0.0, 0.0, 0.0]) for j2, j3 in SEEDS_J23] + [
-            np.array([j1, a2, a3, a4, 0.0, 0.0]) for a2, a3, a4 in
-            ((-0.8, -1.2, 0.4), (0.3, -1.8, 0.0), (-1.2, -0.6, 0.3), (0.6, -2.0, -0.2))]
-        best = None
-        for sd in seeds:
-            self._check()
-            q = self.mv.compute_ik(T, TCP, ARM_JOINTS, sd, timeout=0.1, extra=ex)
-            if q is not None:
-                cost = float(np.max(np.abs(np.asarray(q) - seed)))
-                if best is None or cost < best[0]:
-                    best = (cost, np.asarray(q))
-        return None if best is None else best[1]
-
-    def grip_state(self):
-        """{gripper joint: opening} the plan checks collisions with (plan_grip, set per leg
-        while planning), or {} = the current opening."""
-        g = getattr(self, 'plan_grip', None)
-        return {} if g is None else {'gripper_controller': float(g)}
-
-    def ik_why(self, p, yaw, seed):
-        """Why ik_fixed failed: 'collision' (solvable without the collision check) or 'reach'."""
-        memo = getattr(self, '_memo', None)
-        key = ('why', tuple(np.round(p, 3)), round(float(yaw), 3))
-        if memo is not None and key in memo:
-            return memo[key]
-        r = self._ik_why(p, yaw, seed)
-        if memo is not None:
-            memo[key] = r
-        return r
-
-    def _ik_why(self, p, yaw, seed):
-        T = make_T(rot_z(yaw) @ DOWN, p)
-        for sd in [seed] + [np.array([0.0, j2, j3, 0.0, 0.0, 0.0]) for j2, j3 in SEEDS_J23]:
-            if self.mv.compute_ik(T, TCP, ARM_JOINTS, sd, timeout=0.1,
-                                  avoid_collisions=False) is not None:
-                return 'collision (desk / scene objects)'
-        return 'out of reach / joint limits'
-
 
 class _Tee:
     """stdout -> terminal + log file (timestamped lines), so long messages can be read later."""

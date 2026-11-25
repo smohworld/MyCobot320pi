@@ -1,0 +1,159 @@
+# tray_handle_pick 기본 설정 (n / j / e / r, d, s)
+#   명령줄이 항상 우선: 키 이름의 _ 를 - 로 바꾼 옵션 (예: --relay-speed 0.3)
+#   다른 파일로 일부만 바꾸기: --config 내파일.yaml (같은 구역 이름 아래 바꿀 키만)
+#   적용 순서: 이 파일 < tray_types 프리셋 < --config 파일 < 명령줄
+
+# ---- 트레이 치수 / 잡는 높이 (--tray-type 프리셋이 덮어씀: tray_types)
+tray:
+  tray_type: shelf                # 트레이 종류 (아래 tray_types의 이름)
+  tray_height: 0.076              # 트레이 바닥 -> 손잡이 윗면(마커 면) [m]
+  tray_height_tol: 0.015          # 잰 손잡이 높이가 이만큼 넘게 다르면 경고 [m]
+  relay_tray: [0.15, 0.1, 0.056]  # 충돌 계산용 트레이 몸체: 손가락 닫는 방향, 손잡이 방향, 높이 [m]
+  grasp_depth: 0.024              # 잡을 때 손끝이 손잡이 윗면 아래로 들어가는 깊이 [m]
+  approach_above: 0.036           # 접근 / 들기: 손끝이 손잡이 윗면 위로 이만큼 [m]
+  servo_above: 0.08               # 처음 손잡이 위로 갈 때 손끝 높이 [m]
+  grip_yaw_offset: 90.0           # L -> R 선 대비 TCP yaw (90 = 손잡이 바를 가로질러 잡음) [deg]
+  max_handle_h: 0.15              # 바닥면 위 손잡이가 이보다 높으면 table_z 오류로 봄 [m]
+
+# ---- 손잡이 ArUco 마커
+markers:
+  marker_size: 0.0225     # 마커 검은 부분 한 변 [m]
+  gap: 0.024              # 두 마커 타일 안쪽 모서리 사이 (손잡이 길이) [m]; 0 = 간격 검사 안 함
+  tile_size: 0.03         # 흰 여백 포함 마커 타일 한 변 [m]
+  spacing: 0.0            # 마커 중심 간격 직접 지정 [m] (0 = gap + tile_size)
+  max_spacing_err: 0.004  # 마커 간격 오차 한계 [m]
+  max_tilt: 10.0          # 마커 면 기울기 한계 [deg]
+
+# ---- 감지: 카메라 프레임, 다시 보기(tracking)
+detection:
+  frames: 5            # 감지 1회에 쓰는 카메라 프레임 수
+  pin_timeout: 4.0     # 프레임 기다리는 시간 [s]
+  max_spread: 0.004    # 프레임 사이 손잡이 위치 흔들림 한계 [m]
+  track: true          # 마커가 멀거나 비스듬하면 카메라를 옮겨 다시 봄
+  recenter: 4          # 감지 1회에 카메라 이동 최대 횟수
+  min_marker_px: 30.0  # 마커가 이보다 작으면 가까이 가서 다시 봄 [px]
+  max_off_centre: 0.3  # 화면 중심에서 이만큼(폭 비율) 벗어나면 다시 맞춤
+  max_view: 20.0       # 카메라 축과 마커 법선 각도가 이보다 크면 바로 위에서 다시 봄 [deg]
+  track_tol: 0.01      # 추정 위치가 마지막 본 곳에서 이 안이면 더 안 옮김 [m]
+  scan_step: 0.08      # 못 찾으면 탐색점 주변 +-x / +-y로 이만큼 둘러봄 [m]
+  look_max_r: 0.4      # 카메라가 보는 점은 base에서 이 거리 안 [m]
+
+# ---- 탐색 자세 / 영역 스캔 (regions.yaml)
+search:
+  search_x: 0.25                  # 탐색 자세: 보는 점 x [m]
+  search_y: 0.0                   # 탐색 자세: 보는 점 y [m]
+  search_height: 0.28             # 탐색 자세: 카메라 높이 [m]
+  search_min_height: 0.18         # 카메라 최소 높이 [m]
+  regions: '~/.ros/regions.yaml'  # 탐색 영역 파일 (ros2 run mycobot_tasks regions)
+  scan_height: null               # 영역 스캔 카메라 높이 [m] (null = regions.yaml 값)
+  scan_pull: 0.24                 # 바로 위에서 안 닿는 시야는 base 쪽으로 최대 이만큼 당겨 비스듬히 [m]
+  use_last: true                  # 못 찾으면 영역 스캔 전에 마지막 위치부터 봄
+  chase: 2                        # 화면 가장자리에 잘린 마커 따라가기 횟수 (0 = 끔)
+  chase_dark: 90.0                # 따라가기: 이보다 어두운 픽셀을 마커 검정으로 봄 (0..255)
+  scan_overlap: 0.35              # 영역 스캔 시야끼리 겹치는 비율
+
+# ---- TurtleBot 마커 / 박스 / 놓는 범위
+turtlebot:
+  bot_id: 0                          # TurtleBot ArUco ID (DICT_4X4_50)
+  bot_marker_size: 0.07              # TurtleBot 마커 한 변 [m]
+  bot_marker_dz: 0.0                 # 마커 면이 트레이 놓는 면보다 이만큼 위 [m] (0 = 박스 바닥)
+  bot_place_offset: [0.0, 0.0, 0.0]  # 놓는 점 = 마커 중심 + dx,dy,dz [m]
+  bot_offset_frame: marker           # bot_place_offset 좌표계: marker / base
+  bot_yaw_offset: 90.0               # 트레이 L -> R = 마커 +x에서 이만큼 회전 [deg]
+  bot_box_offset: [0.0, 0.0]         # 장면의 박스 중심 = 마커 중심 + dx,dy (마커 좌표) [m]
+  bot_keepout_h: 0.222               # TurtleBot 위치를 모를 때 그 영역 전체를 이 높이 장애물로 [m]
+  bot_keepout_margin: 0.03           # 그 영역을 사방으로 이만큼 키움 [m]
+  bot_scene: true                    # 찾은 TurtleBot + 박스를 계획 장면에 넣음
+  bot_rim: 0.004                     # 박스 벽 높이 (놓는 면 위) [m]
+  carry_clear: 0.03                  # 트레이를 든 채 스캔할 때 트레이 바닥이 박스 벽 위로 이만큼 [m]
+  bot_close_view: 0.28               # r / j: 박스 안 트레이를 이 높이에서 다시 잼 [m] (0 = 끔)
+  bot_r_range: [0.23, 0.3]           # 박스 중심이 base 축에서 이 범위 밖이면 계획 없이 ERROR: min, max [m]
+  bot_place_r: 0.295                 # n / e: 손잡이를 base에서 이보다 멀리 놓지 않음 [m]
+  bot_place_wall: 0.008              # n / e: 멀면 base 쪽으로 옮겨 놓되 박스 벽까지 최소 이만큼 남김 (방향·트레이 크기로 계산) [m]
+  relay_place_shift: [0.005, 0.01]   # n / e: 박스 중앙이 안 되면 차례로 이만큼 비켜 놓기 [m]
+
+# ---- 그리퍼
+gripper:
+  open_position: 1.0   # 그리퍼 완전히 열기 명령 (1.0 = 10 cm)
+  grasp_open: 0.5      # 잡으러 내려갈 때 / 놓을 때 벌림 (0.5 = 5 cm)
+  hold_grip: 0.2       # 트레이를 든 구간 계획에 쓰는 벌림 (0 = 닫힘)
+  grip_settle: 0.8     # 닫은 뒤 이만큼 기다렸다 손가락 간격 읽기 [s]
+  min_grip_gap: 1.5    # 닫은 간격이 이보다 작으면 못 잡은 것 [mm]
+  full_open_mm: 100.0  # 벌림 1.0일 때 손가락 간격 [mm]
+  place_drop: 0.0015   # 내려놓을 때 잡은 높이보다 이만큼 위에서 열기 [m]
+
+# ---- 계획 장면 (place_scene)
+scene:
+  scene: true          # place_scene 장면 사용 (false = 예전 1.5 m 테이블 상자)
+  scene_args: ''       # place_scene 옵션 문자열 (예: "--with-bot --bot 0.02,-0.40")
+  table_z: null        # 트레이가 놓인 면 z [m] (null = regions / 책상)
+  table_margin: 0.012  # 책상 충돌 상자를 이만큼 올림 [m]
+
+# ---- MoveIt 이동 (카메라 자세 등, relay 경로 밖)
+moveit:
+  planner: pilz                # 카메라 자세 등 MoveIt 이동: pilz (직선/PTP) / ompl
+  velocity: 0.6                # MoveIt 속도 비율
+  accel: 0.5                   # MoveIt 가속 비율
+  slow_velocity: 0.25          # 트레이 근처 느린 이동 속도 비율
+  lin_velocity: 0.6            # LIN 이동 속도 비율
+  lin_accel: 0.5               # LIN 이동 가속 비율
+  mid_settle: precise          # 중간 이동 driver settle_mode: precise / once / fast
+  driver_node: mycobot_driver  # driver 노드 이름 (settle_mode 파라미터)
+
+# ---- relay 계획: 경로 탐색
+relay_plan:
+  relay_tilt: 10.0                    # 운반 중 트레이 기울기 허용 [deg] (잡기 / 놓기는 수평)
+  relay_tilt_weight: 0.05             # 기울기 안에서 수평 쪽으로 당기는 정도 (0 = 한계까지 아무 기울기)
+  relay_carry_z: 0.125                # 격자 위 운반 손끝 높이 (base z) [m]
+  relay_pull_r: 0.16                  # 선반에서 빼낸 트레이를 base 쪽으로 이 반지름까지 당김 [m]
+  relay_grid: [-0.3, 0.3, -0.3, 0.3]  # 운반 격자 xmin, xmax, ymin, ymax [m] (2 cm 간격)
+  relay_min_r: 0.12                   # base 축에서 이보다 가까운 격자점은 제외 [m]
+  relay_grid_budget: [100]            # 책상 -> TurtleBot 빠른 시도: 격자 탐색 점 수 한도, 값마다 한 번 [점]
+  relay_spot_r: [0.2, 0.23]           # 자동 책상 자리: base 축에서 반지름 범위 rmin, rmax [m]
+  relay_max_spots: 5                  # 시도할 책상 자리 수
+  relay_grasp_tries: 3                # D11에서 시도할 다른 잡기 자세(IK 해) 수
+  relay_plan_timeout: 120.0           # 계획 한 부분이 이보다 오래 걸리면 실패 [s] (0 = 무제한)
+  relay_lift_max: 0.15                # 빈손으로 더 높은 목표로 갈 때 먼저 수직으로 최대 이만큼 [m] (0 = 끔)
+  max_step_jump: 12.0                 # 경로 한 걸음에 관절이 이보다 크게 움직이면 거부 (IK 가지 뒤집힘) [deg]
+
+# ---- relay 안전 여유 (충돌 검사)
+relay_safety:
+  relay_plan_pad: [0.005, 0.003, 0.0]  # 든 트레이를 사방으로 키워 계획: 큰 값부터 차례로 시도 [m] (0 쓰이면 WARNING)
+  relay_pad: 0.005                     # 계획 뒤 정밀 재검사: 이 여유보다 가까운 곳 목록 [m]
+  relay_touch: 0.02                    # 트레이 바닥이 놓는/집는 면 위 이 안이면 그 면과의 접촉은 정상 [m]
+  relay_desk_clear: 0.04               # 빈손 OMPL 이동은 책상 위 이만큼 이상 [m] (0 = 끔)
+  relay_desk_clear_r: 0.1              # 그 조건에서 base 주변 이 반폭 정사각형은 제외 [m]
+
+# ---- relay 속도
+relay_speed:
+  relay_speed: 0.35           # relay 경로 관절 최고 속도, 빈손 [rad/s]
+  relay_held_speed: 0.35      # 트레이를 든 구간 관절 최고 속도 [rad/s]
+  relay_tcp_speed: 0.06       # 손끝 / 트레이 모서리 최고 속도 [m/s]
+  relay_accel: 0.15           # 가감속 한계 [m/s2] (트레이 안 물건이 미끄러지지 않게)
+  relay_lever: 0.1            # 공구 회전을 이 거리 점(트레이 모서리)의 이동으로 셈 [m]
+  relay_home_speed: 0.7       # 작업 후 빈손 홈 복귀(OMPL 부분) 관절 최고 속도 [rad/s]
+  relay_home_tcp_speed: 0.12  # 그때 손끝 최고 속도 [m/s] (가속도 같은 비율)
+
+# ---- relay 끝난 뒤
+relay_end:
+  relay_end: home  # 끝나면 home (홈 + 그리퍼 닫기) / stay (그 자리)
+  relay_home: []   # 홈 자세 J1..J6 [deg] (빈 목록 = 프로그램 시작 자세)
+
+# ---- 파일 / 토픽
+files:
+  relay_d11: '~/.ros/layout_tray.yaml'    # D11 트레이 자세 파일 (n: 카메라 먼저 볼 곳, j: 놓을 곳)
+  layout_dir: '~/.ros'                    # layout_*.yaml 폴더 (--layout-poses)
+  relay_urdf: ''                          # robot_state_publisher가 없을 때 relay IK용 URDF
+  save: '~/.ros/tray_handle_last.yaml'    # 감지 결과 저장 파일 (--replay용, 빈 값 = 끔)
+  bot_save: '~/.ros/turtlebot_last.yaml'  # TurtleBot 감지 저장 파일
+  detect_log: '~/.ros/detect_log.csv'     # 감지 기록 CSV (빈 값 = 끔)
+  log: '~/.ros/tray_handle_pick.log'      # 실행 로그 파일 (빈 값 = 끔)
+  image_topic: /camera/image_raw          # 카메라 이미지 토픽
+  camera_calibration_file: null           # 카메라 보정 파일 (null = mycobot_calibration/config/camera.yaml)
+
+# ---- --tray-type 프리셋: 고른 종류의 값이 위 값을 덮어씀 (--config / 명령줄 값은 그대로)
+tray_types:
+  # 선반 트레이 (가이드 부품 E): 몸체 150 x 100 x 56, 손잡이 바 91 mm (10 cm 변 방향), 손잡이 윗면 76 mm
+  shelf: {tray_height: 0.076, relay_tray: [0.15, 0.10, 0.056], bot_yaw_offset: 90.0, grasp_depth: 0.024, approach_above: 0.036}
+  # 테스트 트레이 16 x 10: 손잡이 윗면 72 mm, 손잡이가 16 cm 변 방향. 몸체 높이 미측정 (56?)
+  test: {tray_height: 0.072, relay_tray: [0.10, 0.16, 0.056], bot_yaw_offset: 0.0, grasp_depth: 0.020, approach_above: 0.04}

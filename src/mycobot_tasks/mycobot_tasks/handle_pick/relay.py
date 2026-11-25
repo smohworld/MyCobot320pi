@@ -903,10 +903,46 @@ class RelayMixin:
             out.append((-ui[0] * d, -ui[1] * d))
         return out
 
-    def relay_check_box_r(self, h, what, place=False):
+    def box_shift_max(self, h, lr):
+        """Placing: how far the tray (handle midpoint h, L -> R yaw lr, body --relay-tray) can
+        go from h straight toward the arm base axis and stay inside the TurtleBot box with
+        --bot-place-wall to its walls (box = self.bot marker pose + --bot-box-offset, inner
+        size from place_scene --box-inner). Works for any tray size / box direction.
+        -> (s_max [m], text) ; s_max < 0: not inside even at h."""
+        from mycobot_tasks import place_scene as ps
+        a, b = self.args, self.bot
+        Lb, Wb = ps.parse(shlex.split(a.scene_args) + list(self.bot_extra)).box_inner[:2]
+        yb = float(b['yaw'])
+        cb, sb = math.cos(yb), math.sin(yb)
+        off = a.bot_box_offset
+        centre = np.asarray(b['p'][:2], float) + np.array([cb * off[0] - sb * off[1],
+                                                           sb * off[0] + cb * off[1]])
+        to_box = lambda v: np.array([cb * v[0] + sb * v[1], -sb * v[0] + cb * v[1]])  # noqa: E731
+        L, W = a.relay_tray[:2]                # across the bar (fingers), along the bar (L -> R)
+        d = lr - yb                            # L -> R direction in the box frame
+        half = np.array([abs(math.cos(d)) * W / 2 + abs(math.sin(d)) * L / 2,
+                         abs(math.sin(d)) * W / 2 + abs(math.cos(d)) * L / 2])
+        free = np.array([Lb / 2, Wb / 2]) - half - a.bot_place_wall
+        o = to_box(np.asarray(h[:2], float) - centre)        # tray centre in the box frame
+        r = math.hypot(float(h[0]), float(h[1]))
+        v = to_box(-np.asarray(h[:2], float) / max(r, 1e-9))  # toward the base, box frame
+        s_max = math.inf
+        for k in range(2):
+            if abs(o[k]) > free[k]:
+                s_max = min(s_max, -1.0)
+            elif v[k] > 1e-9:
+                s_max = min(s_max, (free[k] - o[k]) / v[k])
+            elif v[k] < -1e-9:
+                s_max = min(s_max, (free[k] + o[k]) / -v[k])
+        txt = (f'box {Lb * 100:.0f} x {Wb * 100:.0f} cm, tray {half[0] * 200:.0f} x '
+               f'{half[1] * 200:.0f} cm in it, wall gap >= {a.bot_place_wall * 1000:.0f} mm')
+        return s_max, txt
+
+    def relay_check_box_r(self, h, what, place=False, lr=None):
         """The TurtleBot box (place spot / tray in it) within --bot-r-range of the arm base
-        axis? Placing (place=True) up to --bot-place-in beyond the max: the tray goes that much
-        toward the base inside the box (the Burger is never exactly where it should be).
+        axis? Placing (place=True, lr = tray L -> R yaw) farther than --bot-place-r: the tray
+        goes toward the base inside the box to --bot-place-r, as far as the box walls allow
+        (box_shift_max: box direction + tray size, --bot-place-wall left).
         Else Stop at once (no planning: out there it fails after minutes). -> h (moved)."""
         a = self.args
         lo, hi = a.bot_r_range
@@ -917,24 +953,32 @@ class RelayMixin:
             self.say(f'{what} {r * 1000:.0f} mm from the arm base (ok: {rng})')
             return h
         rt = a.bot_place_r                  # placing: the tray handle no farther than this
-        if place and r <= rt + a.bot_place_in and r > rt and r >= lo:
-            d = r - rt
-            out = h.copy()
-            out[:2] = h[:2] * (rt / r)
-            self.say(f'{what} {r * 1000:.0f} mm from the arm base: the tray put {d * 1000:.0f} mm '
-                     f'toward the arm base inside the box, at {rt * 1000:.0f} mm '
-                     f'({out[0] * 1000:.0f}, {out[1] * 1000:.0f}) mm (r picks it up from there)')
-            return out
         if place and lo <= r <= rt:
             self.say(f'{what} {r * 1000:.0f} mm from the arm base (ok: {rng})')
             return h
-        hi2 = (rt + a.bot_place_in) if place else hi
-        move = (f'move the Burger {(r - hi2) * 1000:.0f} mm closer' if r > hi2 else
+        if place and r > rt:
+            need = r - rt
+            if lr is None or self.bot is None:
+                s_max, txt = 0.0, 'box pose unknown'
+            else:
+                s_max, txt = self.box_shift_max(h, lr)
+            if need <= s_max:
+                out = h.copy()
+                out[:2] = h[:2] * (rt / r)
+                self.say(f'{what} {r * 1000:.0f} mm from the arm base: the tray put '
+                         f'{need * 1000:.0f} mm toward the arm base inside the box (up to '
+                         f'{s_max * 1000:.0f} mm possible: {txt}), at {rt * 1000:.0f} mm '
+                         f'({out[0] * 1000:.0f}, {out[1] * 1000:.0f}) mm (r picks it up there)')
+                return out
+            hi2 = rt + max(0.0, s_max)
+            raise Stop(f'{what} {r * 1000:.1f} mm from the arm base: the tray must go '
+                       f'{need * 1000:.0f} mm toward the base inside the box to {rt * 1000:.0f} mm, '
+                       f'the walls allow {max(0.0, s_max) * 1000:.0f} mm ({txt}): move the Burger '
+                       f'{(r - hi2) * 1000:.0f} mm closer (not planned)')
+        move = (f'move the Burger {(r - hi) * 1000:.0f} mm closer' if r > hi else
                 f'move the Burger {(lo - r) * 1000:.0f} mm farther away')
-        raise Stop(f'{what} {r * 1000:.1f} mm from the arm base, outside {rng}'
-                   + (f' (placing: up to {(rt + a.bot_place_in) * 1000:.0f} mm, the tray put at '
-                      f'{rt * 1000:.0f} mm)' if place else '')
-                   + f': {move} (not planned)')
+        raise Stop(f'{what} {r * 1000:.1f} mm from the arm base, outside {rng}: {move} '
+                   '(not planned)')
 
     def _turn_ways(self, q0, ps_, yg, yb, G, tb, why, quick=False, skip_spot=False, cap=None):
         """Desk spot (lifted to the carry height, tool yaw yg, arm at q0) -> over the box G

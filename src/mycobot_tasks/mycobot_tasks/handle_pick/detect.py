@@ -280,14 +280,6 @@ class DetectMixin:
                        f'--table-margin ({a.table_margin * 1000:.0f} mm): handle top only '
                        f'{h * 1000:.0f} mm high? reduce --grasp-depth')
 
-    def measure_pin(self, n=None):
-        """Servo: median midpoint xy (one marker + spacing allowed) or None."""
-        n = n or self.args.frames
-        res = self.frames(n, single=True)
-        if len(res) <= n // 2:
-            return None
-        return np.median(np.array([r['p'][:2] for r in res]), axis=0)
-
     def save_detection(self, p, yaw, spacing, tilt):
         import yaml
         q = self.node.q()
@@ -377,89 +369,3 @@ class DetectMixin:
         except OSError as e:
             print(f'  detection log not written ({e})', flush=True)
         return row
-
-    def act_sweep(self):
-        """g: the same target (tray handle, or the TurtleBot marker with --sweep-target bot)
-        measured with the camera straight above it at each --sweep-heights (over the target),
-        then at --sweep-offsets beside it (target off the image centre). Every measurement
-        goes to --detect-log; the table compares them with the lowest straight view."""
-        a = self.args
-        if not a.go:
-            raise Stop('(dry run) the sweep moves the camera: run with --go')
-        bot = a.sweep_target == 'bot'
-
-        def measure():
-            if bot:
-                res = self.bot_frames(a.frames)
-            else:
-                res = [r for r in self.frames(a.frames) if r['n'] == 2]
-            return res if len(res) >= max(1, a.frames // 2) else None
-        home = self.home
-        res = measure()
-        if res is None:
-            if bot:
-                self.find_bot()
-            else:
-                self.detect_pin()
-            res = measure()
-            if res is None:
-                raise Stop('target not seen')
-        p0 = np.median(np.array([r['p'] for r in res]), axis=0)
-        x, y, z = (float(v) for v in p0)
-        what = 'TurtleBot marker' if bot else 'tray handle'
-        self.say(f'sweep: {what} at ({x * 1000:.0f}, {y * 1000:.0f}, {z * 1000:.0f}) mm, '
-                 f'heights {a.sweep_heights}, offsets {a.sweep_offsets}')
-        self.confirm(f'sweep the camera over the {what} ({len(a.sweep_heights)} heights)')
-        rows = []
-
-        def run(i, n, h, dx, dy):
-            self._check()
-            tag = f'h{h * 100:.0f}' + (f' off{dx * 100:+.0f},{dy * 100:+.0f}' if dx or dy else '')
-            try:
-                self.look_over(x + dx, y + dy, z, f'sweep {i}/{n} {tag}',
-                               oblique=False, view=h, exact=True)
-            except Stop as e:
-                if 'no look-down pose' not in str(e):
-                    raise
-                print(f'  {tag}: not reachable, skipped', flush=True)
-                return None
-            res = measure()
-            if res is None:
-                print(f'  {tag}: target not seen', flush=True)
-                return None
-            row = self.log_detection(f'sweep_{a.sweep_target}', res, tag)
-            if row:
-                rows.append(row)
-            return h
-        n = len(a.sweep_heights)
-        reached = [h for i, h in enumerate(a.sweep_heights)
-                   if run(i + 1, n, h, 0.0, 0.0) is not None]
-        if reached:                       # beside it: at the middle of the reached heights
-            h_off = sorted(reached)[len(reached) // 2]
-            offs = [(dx, dy) for d in a.sweep_offsets if d > 0
-                    for dx, dy in ((d, 0.0), (-d, 0.0), (0.0, d), (0.0, -d))]
-            for i, (dx, dy) in enumerate(offs):
-                run(i + 1, len(offs), h_off, dx, dy)
-        rows = [r for r in rows if r]
-        if not rows:
-            raise Stop('sweep: nothing measured' + ('' if a.detect_log else
-                                                    ' (--detect-log is off)'))
-        straight = [r for r in rows if 'off' not in r['note']]
-        ref = min(straight or rows, key=lambda r: r['cam_h_mm'])
-        print(f'\nsweep result ({what}), reference = lowest straight view ({ref["note"]}):',
-              flush=True)
-        print('  view            cam_h   dist   view   off    px     x       y       z     '
-              'dx    dy    dxy    dz   [mm, deg]', flush=True)
-        for r in rows:
-            dxr, dyr, dzr = (r['x_mm'] - ref['x_mm'], r['y_mm'] - ref['y_mm'],
-                             r['z_mm'] - ref['z_mm'])
-            print(f"  {r['note']:14s} {r['cam_h_mm']:6.0f} {r['dist_mm']:6.0f} "
-                  f"{r['view_deg']:5.1f} {r['off']:5.2f} {r['px']:5.0f} {r['x_mm']:7.1f} "
-                  f"{r['y_mm']:7.1f} {r['z_mm']:6.1f} {dxr:+5.1f} {dyr:+5.1f} "
-                  f"{math.hypot(dxr, dyr):5.1f} {dzr:+5.1f}", flush=True)
-        xy = np.array([[r['x_mm'], r['y_mm']] for r in rows])
-        self.say(f'sweep done: {len(rows)} views, xy spread max '
-                 f'{np.max(np.linalg.norm(xy - xy.mean(0), axis=1)):.1f} mm from the mean '
-                 f'(log: {a.detect_log})')
-        if home is not None:
-            self.move('home', home, mid=True)

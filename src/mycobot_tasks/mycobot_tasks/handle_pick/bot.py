@@ -245,18 +245,6 @@ class BotMixin:
                           f'--box-depth={max(0.0, a.bot_rim):.4f}']   # walls = --bot-rim
         self.apply_scene()
 
-    def load_bot(self):
-        """The last TurtleBot detection (--bot-save) -> self.bot, or None."""
-        import yaml
-        try:
-            with open(os.path.expanduser(self.args.bot_save)) as f:
-                d = yaml.safe_load(f)
-            print(f"TurtleBot from {self.args.bot_save} ({d['stamp']})", flush=True)
-            return self.bot_from_marker(d['marker_xyz'], math.radians(d['yaw_deg']),
-                                        float(d.get('tilt_deg', 0.0)))
-        except (OSError, KeyError, TypeError, ValueError):
-            return None
-
     def save_bot(self):
         import yaml
         b = self.bot
@@ -268,87 +256,6 @@ class BotMixin:
                 yaml.safe_dump(d, f, sort_keys=False)
         except OSError as e:
             print(f'  TurtleBot detection not saved ({e})', flush=True)
-
-    def act_find_bot(self):
-        """t: find the TurtleBot (and back to home with --bot-home)."""
-        home = self.home
-        self.find_bot()
-        if self.args.go and self.args.bot_home and home is not None:
-            self.move('home', home, mid=True)
-
-    def wants_bot(self):
-        a = self.args
-        return a.place_at == 'bot' or a.place_z_spec == 'auto' or a.place_yaw_spec == 'bot'
-
-    def save_origin(self, pin, surface_z):
-        import yaml
-        d = dict(stamp=time.strftime('%Y-%m-%d %H:%M:%S'), tray=self.args.tray,
-                 handle_xyz=[float(v) for v in pin['p']], yaw_lr_deg=math.degrees(pin['yaw']),
-                 surface_z=float(surface_z), returned=False)
-        try:
-            with open(os.path.expanduser(self.args.origin_save), 'w') as f:
-                yaml.safe_dump(d, f, sort_keys=False)
-            print(f'  origin saved: {self.args.origin_save} (r = put it back there)', flush=True)
-        except OSError as e:
-            print(f'  origin not saved ({e})', flush=True)
-
-    def load_origin(self):
-        import yaml
-        try:
-            with open(os.path.expanduser(self.args.origin_save)) as f:
-                return yaml.safe_load(f)
-        except (OSError, yaml.YAMLError):
-            return None
-
-    def act_return(self):
-        """r: the tray from the TurtleBot back to where m picked it (--origin-save):
-        look at the TurtleBot spot, detect the handle there (nothing seen -> TurtleBot region
-        scan), plan everything, pick -> lift -> carry -> put down at the origin xy / surface
-        with the original L -> R direction (no home after)."""
-        a = self.args
-        if self.holding:
-            raise Stop('holding the tray: put it down first')
-        o = self.load_origin()
-        if o is None:
-            raise Stop(f'no origin in {a.origin_save}: m (pick + place on the TurtleBot) '
-                       'saves it')
-        if o.get('returned') and not a.return_again:
-            raise Stop(f"the tray from {o['stamp']} was already put back (--return-again "
-                       'to do it anyway)')
-        oxy = np.array(o['handle_xyz'][:2], float)
-        self.from_bot(oxy, float(o['surface_z']),
-                      None if a.return_keep_yaw else o['yaw_lr_deg'], 'origin')
-        o['returned'] = True
-        try:
-            import yaml
-            with open(os.path.expanduser(a.origin_save), 'w') as f:
-                yaml.safe_dump(o, f, sort_keys=False)
-        except OSError:
-            pass
-
-    def shelf_spot(self):
-        """Place spot on the shelf (no marker there): the centre of the shelf region
-        (regions.yaml, set in RViz) -> (xy, surface z)."""
-        r = self.region('shelf')
-        if r is None:
-            raise Stop(f'no shelf area in {self.args.regions}: run '
-                       '`ros2 run mycobot_tasks regions` and set it in RViz')
-        return np.array([sum(r['x']) / 2, sum(r['y']) / 2]), float(r['z'])
-
-    def act_bot_to_shelf(self):
-        """k: the tray from the TurtleBot onto the shelf: detect it on the TurtleBot, plan
-        everything, pick -> lift -> carry -> put down with the handle midpoint at the shelf
-        region centre (--shelf-yaw, else a numeric --place-yaw: tray L -> R direction
-        there; default: kept)."""
-        a = self.args
-        if self.holding:
-            raise Stop('holding the tray: put it down first')
-        xy, z = self.shelf_spot()
-        # only a number given for --place-yaw ('bot' = the TurtleBot direction, set by m)
-        yaw = None if a.place_yaw_spec in (None, 'bot') else float(a.place_yaw_spec)
-        if a.shelf_yaw is not None:           # --shelf-yaw: the shelf direction on its own
-            yaw = a.shelf_yaw
-        self.from_bot(xy, z, yaw, 'shelf centre')
 
     def measure_tray_on_bot(self):
         """The tray in the TurtleBot box: looked for at the bot region height (regions.yaml
@@ -428,30 +335,3 @@ class BotMixin:
         self.save_bot()
         self.bot_to_scene()
         return pin2
-
-    def from_bot(self, oxy, oz, yaw_deg, label):
-        """Tray on the TurtleBot -> put down with the handle midpoint at oxy on the surface
-        oz [m], tray L -> R yaw_deg (None = as it is on the TurtleBot).
-        The TurtleBot marker lies under the tray (box floor centre): it cannot be seen now.
-        The tray is looked for at the bot region height (regions.yaml z), and the TurtleBot
-        pose for the planning scene comes from the tray (bot_from_tray)."""
-        a = self.args
-        keep = (a.table_z, a.place_z, a.place_at)
-        try:
-            self.say(f'tray on the TurtleBot -> {label} ({oxy[0] * 1000:.0f}, '
-                     f'{oxy[1] * 1000:.0f}) mm, surface z {oz * 1000:.0f} mm')
-            pin = self.measure_tray_on_bot()
-            xy = pin['p'][:2].copy()
-            a.place_z, a.place_at = oz, [float(oxy[0]), float(oxy[1])]
-            turn = None
-            if yaw_deg is not None:
-                turn = math.remainder(math.radians(yaw_deg) - pin['yaw'], 2 * math.pi)
-            plan = self.plan_pick(xy, pin['yaw'] + math.radians(a.grip_yaw_offset), oxy, turn,
-                                  rim=0.0)
-            self.say(f'TurtleBot -> {label} plan OK: ({xy[0] * 1000:.0f}, {xy[1] * 1000:.0f}) '
-                     f'-> ({oxy[0] * 1000:.0f}, {oxy[1] * 1000:.0f}) mm, tray L->R '
-                     f"{math.degrees(pin['yaw']):.0f} -> "
-                     f"{yaw_deg if turn is not None else math.degrees(pin['yaw']):.0f} deg")
-            self.transfer(pin, plan, oxy)
-        finally:
-            a.table_z, a.place_z, a.place_at = keep
