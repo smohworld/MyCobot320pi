@@ -383,7 +383,46 @@ class BotMixin:
             self.bot = self.bot_from_tray(pin)
             self.save_bot()
             self.bot_to_scene()
-        return pin
+        return self._tray_on_bot_closer(pin)
+
+    def _tray_on_bot_closer(self, pin):
+        """The search view over the TurtleBot is high (the gripper kept over the Burger /
+        LiDAR while their pose is unknown): small markers, a poor tilt. Now the Burger is in
+        the scene (from the tray): the camera --bot-close-view over the tray and measured
+        again; no pose / not seen there -> the first measurement."""
+        a = self.args
+        if not a.go or a.bot_close_view <= 0:
+            return pin
+        z = float(pin['p'][2]) - a.tray_height
+        try:
+            self.look_over(float(pin['p'][0]), float(pin['p'][1]), z,
+                           'closer over the tray in the TurtleBot box', view=a.bot_close_view)
+        except Stop as e:
+            if self._abort.is_set():
+                raise
+            self.say(f'closer view over the TurtleBot tray not possible ({str(e).splitlines()[0]}): '
+                     'the first measurement is used')
+            return pin
+        self.expect_on_bot = True
+        try:
+            pin2 = self.detect_pin(region='bot')
+        except Stop as e:
+            if self._abort.is_set():
+                raise
+            self.say(f'closer view: tray not measured ({str(e).splitlines()[0]}): the first '
+                     'measurement is used')
+            return pin
+        finally:
+            self.expect_on_bot = False
+        d = float(np.linalg.norm(np.asarray(pin2['p'][:2]) - np.asarray(pin['p'][:2]))) * 1000
+        self.say(f'tray in the TurtleBot box measured again from {a.bot_close_view * 100:.0f} cm: '
+                 f'{d:.1f} mm from the first measurement')
+        a.table_z = float(pin2['p'][2]) - a.tray_height
+        self.set_heights(a.tray_height)
+        self.bot = self.bot_from_tray(pin2)
+        self.save_bot()
+        self.bot_to_scene()
+        return pin2
 
     def from_bot(self, oxy, oz, yaw_deg, label):
         """Tray on the TurtleBot -> put down with the handle midpoint at oxy on the surface

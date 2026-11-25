@@ -303,12 +303,28 @@ def main():
            'tray must lie fully on the desk), e.g. -0.22,0 behind the arm base; default '
            '(auto): a desk grid at --relay-spot-r. e looks for the tray only there (camera '
            'over each spot; auto: the first one), r puts it there')
+    g('--relay-lift-max', type=float, default=0.15,
+      help='n / j / e / r: empty-arm moves to a higher goal (home, start) first go straight up '
+           'by up to this (tool orientation kept), then OMPL [m] (0 = off)')
+    g('--relay-desk-clear', type=float, default=0.04,
+      help='n / j / e / r: empty-arm moves (OMPL: to the start, arm switch, home) keep this far '
+           'above the desk top [m] (0 = off)')
+    g('--relay-desk-clear-r', type=float, default=0.10,
+      help='--relay-desk-clear: a square this half size around the arm base is left out [m]')
     g('--relay-plan-timeout', type=float, default=120.0,
       help='n / j / e / r: one planning part longer than this = failed (ERROR, the arm back '
            'home) [s] (0 = no limit). The real robot plans ~3x slower than the simulation')
-    g('--bot-place-in', type=float, default=0.01,
-      help='n / e (placing): the TurtleBot box up to this beyond the --bot-r-range max is '
-           'still used, the tray put that much toward the arm base inside the box [m]')
+    g('--bot-close-view', type=float, default=0.28,
+      help='r / j: the tray in the TurtleBot box measured again with the camera this high over '
+           'it, once the Burger is in the scene (the search view is high: small markers, '
+           'poor tilt) [m] (0 = off)')
+    g('--bot-place-r', type=float, default=0.295,
+      help='n / e (placing): the tray handle put no farther than this from the arm base (inside '
+           'the --bot-r-range max, so r / j find it within range despite the marker error) [m]')
+    g('--bot-place-in', type=float, default=0.015,
+      help='n / e: the TurtleBot box centre up to this beyond --bot-place-r is still used, the '
+           'tray moved toward the arm base inside the box to --bot-place-r [m] (box: >= 13 mm '
+           'left to the walls at 15 mm, ~11 mm at 20 mm)')
     g('--relay-place-shift', type=lambda t: [float(v) for v in t.split(',')], default=[0.005, 0.01],
       help='n / e: no way down into the TurtleBot box at its centre -> the tray put this far '
            'off it, each value in turn (toward the arm base first) [m] (0 = centre only)')
@@ -338,7 +354,10 @@ def main():
            'surface are normal (not collisions) [m]; covers the shelf margin (1 cm) + the '
            'tray clearance (--relay-plan-pad)')
     g('--relay-speed', type=float, default=0.35,
-      help='n / j: fastest joint speed of the relay paths [rad/s]')
+      help='n / j / e / r: fastest joint speed of the relay paths, empty arm [rad/s]')
+    g('--relay-held-speed', type=float, default=0.25,
+      help='n / j / e / r: the same while holding the tray (--relay-tcp-speed scaled alike) '
+           '[rad/s]')
     g('--relay-grasp-tries', type=int, default=3,
       help='n / j: different grasp poses (IK branches) tried on D11 when the pull out from '
            'one hits the rack / the arm itself [count]')

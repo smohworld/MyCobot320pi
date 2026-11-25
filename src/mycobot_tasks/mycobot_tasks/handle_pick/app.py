@@ -490,6 +490,10 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
                 steps = self.relay_reverse(B['steps'])
                 if steps[-1][0] == 'fingers':     # back at the start closed: no opening there
                     steps = steps[:-1]
+                # no arm switch back to where r started (the camera view over the TurtleBot):
+                # from over the tray on the desk straight home (relay_home), fingers closed
+                if steps[-1][0] == 'traj' and steps[-1][2][0].startswith('arm switch back'):
+                    steps = steps[:-1]
                 self.relay_summary(steps, 'TurtleBot -> desk')
                 self.relay_verify(steps, 'TurtleBot -> desk')
             except Stop as e:

@@ -123,3 +123,64 @@ n만 실패: bot_yaw180 (촘촘한 검사에서 트레이-base 실제 충돌 발
   - ±2 cm 오차가 있어도 대부분 성공합니다 (base 4/4, r28 4/4, yaw240 3/3, az-25 3/4).
 - 로봇을 ±90° 돌린 배치는 실패합니다 (D11 쪽).
 - 실제 운용: 카메라로 잰 D11 위치가 layout과 1~2 cm 넘게 다르면, 특히 +x 쪽이면 계획이 실패할 수 있습니다. 실패해도 아무것도 움직이지 않은 상태에서 멈춥니다.
+
+> 11-24 메모: 11장의 "꼭 줄 옵션"은 이제 기본값입니다 (`--relay-plan-pad` 0.005,0.003,0 단계적, `--bot-yaw-offset 90`).
+> 11-23의 offset 90 "성공"은 회전 중간을 검사하기 전이라 실제로는 base에 닿는 경로였습니다 (12.1 참고).
+
+## 12. 2026-11-24 진행 (커밋 407475a, d074203 + 커밋 안 한 수정)
+
+### 12.1 동작 변경 (`handle_pick/`)
+| 내용 | 옵션 (기본값) |
+|---|---|
+| **e / r: 책상 ↔ 버거만** (`--do deskbot / botdesk`). e는 책상 자리 위에서만 트레이를 찾음, r은 박스 안 트레이를 찾음 | `--relay-desk x,y,yaw`, `--relay-spots` (기본 auto: base에서 20~23 cm) |
+| 트레이를 base에서 먼 곳(책상 자리 → 35 % → 70 % → 박스 위)에서 회전. 책상 자리가 base에서 18~20 cm라 15 cm 트레이가 회전 중 base를 쓸었음 | `--bot-yaw-offset 90` (선반 트레이 15 cm 변 → 박스 20 cm 쪽) |
+| 그리퍼: 닫은 채 접근 → 열기, 놓고 위로 빠진 뒤 닫기, 책상 자세 전환은 닫은 채 | – |
+| 끝나면 홈 + 그리퍼 닫기. 집기 전 실패(트레이 없음, 버거 못 찾음, 계획 실패, 거리 밖)는 ERROR 후 홈 | `--relay-end home / stay` |
+| 여유 단계적 계획 (5 → 3 → 0 mm, 구간마다), 0 mm면 WARNING | `--relay-plan-pad 0.005,0.003,0` |
+| 받침면 접촉 허용 2 cm. 버거 박스를 바닥(`bot_box`)과 벽(`bot_box_walls`)으로 나눔: 벽(바닥 위 4 mm 턱)은 항상 충돌 검사 | `--relay-touch 0.02` |
+| 계획 시간: IK 해석적 Jacobian (계획의 90 %가 IK였음, 10 → 3 ms), 격자 탐색 한도 100점 후 전체, 같은 박스 실패 반복 안 함, 시간 제한 | `--relay-grid-budget 100`, `--relay-plan-timeout 120` |
+| 버거 거리 미리 검사 (밖이면 계획 없이 ERROR, 몇 mm 옮기라고 표시) | `--bot-r-range 0.23,0.30` |
+| 놓을 때 트레이를 295 mm 안쪽에 (박스 중심 295~310 mm면 로봇 쪽으로 최대 15 mm 옮겨 놓음 → r이 측정 오차가 있어도 집음). 박스 중앙에서 못 내려가면 5 / 10 mm 비켜 놓기(마지막 단계에서만) | `--bot-place-r 0.295`, `--bot-place-in 0.015`, `--relay-place-shift 0.005,0.01` |
+| 빈손 OMPL 이동(시작 위치, 자세 전환, 홈)은 책상 위 4 cm 이상 (base 주변 20 cm 제외), 목표가 더 높으면 먼저 수직으로 최대 15 cm 올림 | `--relay-desk-clear 0.04`, `--relay-desk-clear-r 0.10`, `--relay-lift-max 0.15` |
+| r: 마지막 "arm switch back" 삭제 (책상에 놓고 바로 홈) | – |
+| 트레이를 든 구간 속도 0.25 rad/s (빈손 0.35) — **실물 효과 아직 안 봄** | `--relay-held-speed 0.25` |
+| r / j: 박스 안 트레이를 찾은 뒤 버거를 장면에 넣고 카메라 28 cm로 다시 잼 (처음 36 cm는 마커 36 px라 기울기 9~16°로 나옴 → 다시 재면 50 px, 2.0°) | `--bot-close-view 0.28` |
+| 트레이 0~5 (마커 10+2t / 11+2t) 자동 선택, 잘못된 트레이 확인 자리 `trays.TrayCheck` (지금은 모두 통과) | – |
+| 트레이 프리셋: shelf = 높이 76 mm, 15×10×5.6, offset 90, 잡는 깊이 24 / 꺼내는 높이 36 mm; test = 72 mm, 10×16×5.6(몸체 높이 미확인), offset 0, 20 / 40 mm | `--tray-type shelf / test` |
+| 장면 / 배치: `place_scene --rack-trays [--rack-tray-out]`, layout 노드 `--scene-args` (launch가 전달), RViz 책상·선반 잠금, D11 위 트레이 핸들 (±5 cm, ±20°) | – |
+| 드라이버: `~/final_project_ws/track_log.csv` (움직이는 중 계획−실제, 경로 이탈 off_norm, connection) | `track_log_csv` (driver.yaml) |
+
+### 12.2 시뮬 결과
+- **D11 위 트레이 위치 허용 범위** (`scripts/d11tol.py`, n, 76 mm, 깊게 잡기 + 낮게 꺼내기): 레일 방향(base +y) −3 ~ +1 cm (+2 cm는 팔이 안 닿음), 포크 방향 ±3 cm, yaw −3 ~ +10° (−6°는 운반 중 base에 닿음).
+- **관절 오차** (`scripts/perturb_run.py`): 0.5°는 모두 통과. 1°는 D11 쪽(꺼내기: 로봇 받침/포크, 운반: base)과 책상 → 버거 운반(base)에서 닿음.
+- **책상 자리** (`scripts/spotscan.py`, 42곳): 17~28 cm에서 27곳 성공, 자리에 따라 거의 차이 없음 (여유, 5 mm 안 자세, 자세 전환 23~25 s 모두 같음). base 근처 문제는 자리가 아니라 **D11에서 당겨 오는 거리** `--relay-pull-r` 0.16 때문: 0.18 이상이면 D11 쪽도 5 mm, 5 mm 안 자세 0개 (기본값 변경은 아직 안 함, 0.20 제안).
+- **계획 시간** (같은 배치, `scripts/profile_run.py`): 테스트 e 60 → 9 s, 선반 e 25 → 4.5 s, 선반 n 10+29 → 6+6 s, 선반 j 49 → 12 s.
+- 버거 박스 중심 305 / 310 mm에서 e → r 연속 성공 (295 mm에 놓고 집음), 313 mm는 바로 ERROR.
+
+### 12.3 실물 결과 (테스트 트레이, e / r)
+- 성공: r 15:50, e 16:01, e 17:06, r 17:09 (버거 마커 (239, −147) ~ (278, −106) mm, 박스 yaw −78 ~ −113°).
+- 계획: e 79 → **12 s**, r 77 → **24 s** (IK 개선 후).
+- 관절: 끝 자세 오차 0.5° 이내 (보정 후). 움직이는 중 계획보다 약 0.12 s 늦음 (2~4°), **경로 이탈은 트레이를 든 구간 0.8~1.65°** (손끝 약 4~8 mm, 여유 5 mm와 비슷) → 속도 낮추기 넣음.
+- 잡기 간격 3.0 mm (손잡이 2~3 mm 두께, 정상).
+- 실패 사례: 버거 30.5 / 31.1 cm → 계획 몇 분 후 실패 (지금은 거리 검사로 바로 ERROR). r을 박스가 빈 상태로 실행 → "nothing found" 후 홈 (정상).
+
+### 12.4 다음에 할 일
+1. 버거 도킹 오차 확인 (사용자, 11-25): 위 범위(거리 230~310 mm 놓기 / 230~300 mm 집기) 안에 드는지.
+2. 실물에서 `--relay-held-speed 0.25` 효과: `track_log.csv` socket 줄의 off_norm 비교.
+3. 실물에서 빈손 이동 높이 (책상 위 4 cm, 먼저 올리기)와 홈 복귀 처짐 확인.
+4. `--relay-pull-r 0.20` 기본값 여부 결정 (n / j의 D11 쪽 여유 3 → 5 mm).
+5. 12.1의 커밋 안 한 수정 커밋.
+6. 남은 제안: 경로 IK 간격 5 mm → 1 cm (계획 약 절반), 테스트 트레이에서 되는 툴 방향 먼저 시도, 드라이버 lookahead 튜닝, e에서 버거 마커도 가까이서 다시 재기.
+
+### 12.5 시뮬 / 실물 명령
+```bash
+# 시뮬 (선반 없음, 테스트 트레이): layout_noshelf.yaml = layout.yaml에서 with_shelf: false
+ros2 launch mycobot_calibration handeye.launch.py sim:=true layout:=false scene_args:="--layout $HOME/.ros/layout_noshelf.yaml"
+ros2 run mycobot_tasks layout --file $HOME/.ros/layout_noshelf.yaml --tray-height 0.072 --scene-args="--layout $HOME/.ros/layout_noshelf.yaml"
+ros2 run mycobot_tasks tray_handle_pick --tray-type test --layout-poses --scene-args="--layout $HOME/.ros/layout_noshelf.yaml" --go   # 창에서 e / r
+# 실물
+ros2 launch mycobot_calibration handeye.launch.py scene_args:="--layout $HOME/.ros/layout_noshelf.yaml"
+ros2 run mycobot_tasks tray_handle_pick --tray-type test --go --real          # 처음엔 --auto 없이 단계 모드
+ros2 run mycobot_tasks tray_handle_pick --tray-type test --go --real --do bot --auto   # 버거 위치만 재기
+# 분석 (notes/.../scripts): profile_run.py (계획 시간 분해), perturb_run.py (관절 오차), d11tol.py, spotscan.py
+```

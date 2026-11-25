@@ -43,6 +43,10 @@ TMP_ID = 'relay_tray_plan'
 CLOSED = 0.0
 
 
+def _skew(v):
+    return np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
+
+
 def seg(a, b, step=0.005):
     """Points from a (excluded) to b (included) every <= step."""
     a, b = np.asarray(a, float), np.asarray(b, float)
@@ -248,15 +252,72 @@ class RelayMixin:
         return out
 
     # ------------------------------------------------------------------ IK
+    # IK: scipy least_squares with the analytic Jacobian (the joint axes from the FK) instead
+    # of finite differences, solver tolerances 1e-6 (the acceptance is unchanged): the same
+    # solutions (300 test poses: joints within 0.06 deg), ~2x faster (planning was ~90 % IK)
+    def _fkj(self, q):
+        """T base -> TCP and the world z axis / origin of each arm joint (ARM_JOINTS order;
+        the URDF joint axes are all z). Same T as self._rl_arm.fk."""
+        jt = getattr(self, '_rl_fkj', None)
+        if jt is None or jt[0] is not self._rl_arm:
+            arm = self._rl_arm
+            ax_z = all(ax is None or np.allclose(ax, [0, 0, 1]) for _, _, ax in arm.joints)
+            jt = (arm, ax_z, [(arm.index.get(n), T0[:3, :3].copy(), T0[:3, 3].copy(), ax)
+                              for n, T0, ax in arm.joints])
+            self._rl_fkj = jt
+        arm, ax_z, joints = jt
+        if not ax_z:                        # (not this robot) generic: finite differences
+            return arm.fk(q), None, None
+        R, pt = np.eye(3), np.zeros(3)
+        Z, O = np.zeros((6, 3)), np.zeros((6, 3))
+        for i, R0, p0, ax in joints:
+            pt = pt + R @ p0
+            R = R @ R0
+            if ax is not None:
+                Z[i], O[i] = R[:, 2], pt
+                c, s_ = math.cos(q[i]), math.sin(q[i])
+                R = R @ np.array([[c, -s_, 0.0], [s_, c, 0.0], [0.0, 0.0, 1.0]])
+        T = np.eye(4)
+        T[:3, :3], T[:3, 3] = R, pt
+        return T, Z, O
+
+    def _fk_cached(self):
+        """FK + joint axes memo for one solve (fun and jac at the same q)."""
+        memo = {}
+
+        def get(q):
+            k = q.tobytes()
+            if k not in memo:
+                memo.clear()
+                memo[k] = self._fkj(q)
+            return memo[k]
+        return get
+
     def _ik_v(self, p, yaw, q0):
         """Tool straight down at p, heading yaw, near q0 (joint windows LO..HI) or None."""
-        fk, R = self._rl_arm.fk, rot_z(yaw) @ DOWN
+        R = rot_z(yaw) @ DOWN
+        get = self._fk_cached()
 
         def f(q):
-            T = fk(q)
+            T = get(q)[0]
             return np.r_[(T[:3, 3] - p) * 10, (T[:3, :3].T @ R - np.eye(3)).ravel() * 0.3]
-        r = least_squares(f, np.clip(q0, LO, HI), bounds=(LO, HI))
+
+        def jac(q):
+            T, Z, O = get(q)
+            Rt, pt = T[:3, :3], T[:3, 3]
+            J = np.zeros((12, 6))
+            for i in range(6):
+                J[:3, i] = np.cross(Z[i], pt - O[i]) * 10
+                J[3:, i] = (-(Rt.T @ _skew(Z[i])) @ R).ravel() * 0.3
+            return J
+        r = least_squares(f, np.clip(q0, LO, HI), bounds=(LO, HI),
+                          **self._ik_opts(jac, get, q0))
         return r.x if np.linalg.norm(r.fun) < 3e-3 else None
+
+    def _ik_opts(self, jac, get, q0):
+        if get(np.clip(np.asarray(q0, float), LO, HI))[1] is None:
+            return {}                       # generic axes: as before (finite differences)
+        return dict(jac=jac, ftol=1e-6, xtol=1e-6, gtol=1e-6)
 
     def _ik_t(self, p, yaw, q0, tilt=None):
         """TCP at p, tool z within tilt of straight down, x heading yaw, near q0. Inside
@@ -264,16 +325,34 @@ class RelayMixin:
         only as much as the arm needs there, level wherever it can be."""
         tl = math.radians(self.args.relay_tilt) if tilt is None else tilt
         w = self.args.relay_tilt_weight
-        fk = self._rl_arm.fk
+        get = self._fk_cached()
 
         def f(q):
-            T = fk(q)
+            T = get(q)[0]
             ang = math.acos(max(-1.0, min(1.0, -T[2, 2])))
             hx = math.atan2(T[1, 0], T[0, 0])
             return np.r_[(T[:3, 3] - p) * 10, max(0.0, ang - tl) * 3,
                          math.remainder(hx - yaw, 2 * math.pi) * 0.5, ang * w,
                          (q - q0) * 0.02]
-        r = least_squares(f, np.clip(q0, LO, HI), bounds=(LO, HI))
+
+        def jac(q):
+            T, Z, O = get(q)
+            Rt, pt = T[:3, :3], T[:3, 3]
+            ang = math.acos(max(-1.0, min(1.0, -T[2, 2])))
+            sa = max(math.sqrt(max(0.0, 1.0 - T[2, 2] ** 2)), 1e-9)   # d ang = d T22 / sin
+            den = max(T[0, 0] ** 2 + T[1, 0] ** 2, 1e-12)
+            J = np.zeros((12, 6))
+            for i in range(6):
+                dR = _skew(Z[i]) @ Rt
+                J[:3, i] = np.cross(Z[i], pt - O[i]) * 10
+                da = dR[2, 2] / sa
+                J[3, i] = da * 3 if ang > tl else 0.0
+                J[4, i] = (T[0, 0] * dR[1, 0] - T[1, 0] * dR[0, 0]) / den * 0.5
+                J[5, i] = da * w
+            J[6:, :] = np.eye(6) * 0.02
+            return J
+        r = least_squares(f, np.clip(q0, LO, HI), bounds=(LO, HI),
+                          **self._ik_opts(jac, get, q0))
         return r.x if np.linalg.norm(r.fun[:5]) < 4e-3 else None
 
     def _ik_any(self, p, yaw, flip, n=40):
@@ -476,7 +555,59 @@ class RelayMixin:
         print(f'  relay {label}: grid {len(done)} points settled, '
               f'{len(left)}/{len(goals)} goals not reached', flush=True)
 
+    def _desk_keepout(self):
+        """World boxes --relay-desk-clear high on the desk top (empty-arm OMPL moves keep
+        that far above it), a --relay-desk-clear-r square around the arm base left out (the
+        base / supports / lower links are there). [] = off."""
+        from geometry_msgs.msg import Pose
+        from moveit_msgs.msg import CollisionObject
+        from shape_msgs.msg import SolidPrimitive
+        a = self.args
+        H, rb = a.relay_desk_clear, a.relay_desk_clear_r
+        if H <= 0:
+            return []
+        if getattr(self, '_desk_geo', None) is None:
+            self._desk_geo = self._desk()
+        c, sz, dy, top = self._desk_geo
+        Ri = rot_z(-dy)[:2, :2]
+        b = Ri @ (np.zeros(2) - c)                      # the arm base in the desk frame
+        x0, x1, y0, y1 = -sz[0] / 2, sz[0] / 2, -sz[1] / 2, sz[1] / 2
+        ex0, ex1, ey0, ey1 = b[0] - rb, b[0] + rb, b[1] - rb, b[1] + rb
+        rects = [(x0, min(ex0, x1), y0, y1), (max(ex1, x0), x1, y0, y1),
+                 (max(ex0, x0), min(ex1, x1), y0, min(ey0, y1)),
+                 (max(ex0, x0), min(ex1, x1), max(ey1, y0), y1)]
+        o = CollisionObject()
+        o.id, o.header.frame_id, o.operation = 'relay_desk_keepout', 'base', CollisionObject.ADD
+        R = rot_z(dy)[:2, :2]
+        qz, qw = math.sin(dy / 2), math.cos(dy / 2)
+        for u0, u1, v0, v1 in rects:
+            if u1 - u0 < 1e-3 or v1 - v0 < 1e-3:
+                continue
+            m = c + R @ np.array([(u0 + u1) / 2, (v0 + v1) / 2])
+            p = Pose()
+            p.position.x, p.position.y, p.position.z = float(m[0]), float(m[1]), float(top + H / 2)
+            p.orientation.z, p.orientation.w = float(qz), float(qw)
+            o.primitives.append(SolidPrimitive(type=SolidPrimitive.BOX,
+                                               dimensions=[u1 - u0, v1 - v0, H]))
+            o.primitive_poses.append(p)
+        return [o] if o.primitives else []
+
     def _ompl(self, qa, qb, label, grip=None):
+        """Empty arm qa -> qb: OMPL kept --relay-desk-clear above the desk top (start / goal
+        inside that layer, or no way: WARNING, then without it, as before)."""
+        keep = self._desk_keepout()
+        if keep:
+            self._scene(world=keep)
+            try:
+                return self._ompl_raw(qa, qb, label, grip)
+            except RelayFail as e:
+                self.say(f'WARNING: {label}: no way {self.args.relay_desk_clear * 100:.0f} cm '
+                         f'over the desk ({e}): planned without that margin')
+            finally:
+                self._remove_world('relay_desk_keepout')
+        return self._ompl_raw(qa, qb, label, grip)
+
+    def _ompl_raw(self, qa, qb, label, grip=None):
         """Empty arm qa -> qb (OMPL, gripper open / grip), re-checked every 2 deg."""
         from moveit_msgs.msg import Constraints, JointConstraint, RobotState
         from moveit_msgs.srv import GetMotionPlan
@@ -782,22 +913,27 @@ class RelayMixin:
         h = np.asarray(h, float)
         r = math.hypot(float(h[0]), float(h[1]))
         rng = f'{lo * 1000:.0f}..{hi * 1000:.0f} mm'
-        if lo <= r <= hi:
+        if not place and lo <= r <= hi:
             self.say(f'{what} {r * 1000:.0f} mm from the arm base (ok: {rng})')
             return h
-        if place and hi < r <= hi + a.bot_place_in:
-            d = r - hi
+        rt = a.bot_place_r                  # placing: the tray handle no farther than this
+        if place and r <= rt + a.bot_place_in and r > rt and r >= lo:
+            d = r - rt
             out = h.copy()
-            out[:2] = h[:2] * (hi / r)
-            self.say(f'{what} {r * 1000:.0f} mm from the arm base, {d * 1000:.0f} mm beyond '
-                     f'{hi * 1000:.0f} mm: the tray put {d * 1000:.0f} mm toward the arm base '
-                     f'inside the box ({out[0] * 1000:.0f}, {out[1] * 1000:.0f}) mm')
+            out[:2] = h[:2] * (rt / r)
+            self.say(f'{what} {r * 1000:.0f} mm from the arm base: the tray put {d * 1000:.0f} mm '
+                     f'toward the arm base inside the box, at {rt * 1000:.0f} mm '
+                     f'({out[0] * 1000:.0f}, {out[1] * 1000:.0f}) mm (r picks it up from there)')
             return out
-        hi2 = hi + (a.bot_place_in if place else 0.0)
+        if place and lo <= r <= rt:
+            self.say(f'{what} {r * 1000:.0f} mm from the arm base (ok: {rng})')
+            return h
+        hi2 = (rt + a.bot_place_in) if place else hi
         move = (f'move the Burger {(r - hi2) * 1000:.0f} mm closer' if r > hi2 else
                 f'move the Burger {(lo - r) * 1000:.0f} mm farther away')
         raise Stop(f'{what} {r * 1000:.1f} mm from the arm base, outside {rng}'
-                   + (f' (+{a.bot_place_in * 1000:.0f} mm placing inward)' if place else '')
+                   + (f' (placing: up to {(rt + a.bot_place_in) * 1000:.0f} mm, the tray put at '
+                      f'{rt * 1000:.0f} mm)' if place else '')
                    + f': {move} (not planned)')
 
     def _turn_ways(self, q0, ps_, yg, yb, G, tb, why, quick=False, skip_spot=False, cap=None):
@@ -953,12 +1089,16 @@ class RelayMixin:
                 out.append(({'grasp': 'release', 'release': 'grasp'}[kind], None, (lb, lf)))
         return out
 
-    def _times(self, pts):
+    def _times(self, pts, held=False):
         """Durations of the steps between joint points pts: smooth start / stop along the
         path. Path metric per step = finger tip travel + tool rotation x --relay-lever (a
         tray edge); speed <= --relay-tcp-speed and every joint <= --relay-speed, speeding
         up / slowing down at <= --relay-accel (forward / backward pass), 0 at both ends."""
         a = self.args
+        # holding the tray: slower (--relay-held-speed; the real arm lags ~0.12 s, its error
+        # off the planned path grows with the speed), the finger tip limit scaled alike
+        js = a.relay_held_speed if held else a.relay_speed
+        ts = a.relay_tcp_speed * (js / a.relay_speed if a.relay_speed > 0 else 1.0)
         T = [self._rl_arm.fk(q) for q in pts]
         n = len(pts) - 1
         if n < 1:
@@ -971,7 +1111,7 @@ class RelayMixin:
             mi = max(d + ang * a.relay_lever, 1e-5)
             J = float(np.max(np.abs(np.asarray(pts[i + 1]) - np.asarray(pts[i]))))
             m.append(mi)
-            lim.append(min(a.relay_tcp_speed, a.relay_speed * mi / J if J > 1e-9 else 1e9))
+            lim.append(min(ts, js * mi / J if J > 1e-9 else 1e9))
         v = [0.0] * (n + 1)
         for i in range(n):                                  # speeding up
             cap = min(lim[i], lim[i + 1]) if i + 1 < n else 0.0
@@ -1000,7 +1140,7 @@ class RelayMixin:
                 continue
             if not d:
                 continue
-            dts = self._times(list(d))
+            dts = self._times(list(d), held)
             Ts = [self._rl_arm.fk(q) for q in d]
             tilt = max(math.degrees(math.acos(max(-1.0, min(1.0, -T[2, 2])))) for T in Ts)
             sp = max([float(np.linalg.norm(Ts[i + 1][:3, 3] - Ts[i][:3, 3])) / dt
@@ -1017,7 +1157,7 @@ class RelayMixin:
             print(ln, flush=True)
 
     # ------------------------------------------------------------------ running
-    def _execute(self, qs, label, expect=None):
+    def _execute(self, qs, label, expect=None, held=False):
         from builtin_interfaces.msg import Duration
         from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
         a = self.args
@@ -1032,7 +1172,7 @@ class RelayMixin:
         if off > 3.0:
             raise Stop(f'{label}: the arm is {off:.1f} deg away from the planned start')
         pts = [q0] + list(qs)
-        dts = [dt / self.sim_speed() for dt in self._times(pts)]
+        dts = [dt / self.sim_speed() for dt in self._times(pts, held)]
         jt, t = JointTrajectory(joint_names=list(ARM_JOINTS)), 0.0
         for v, dt in zip(pts, [0.0] + dts):
             t += dt
@@ -1056,7 +1196,7 @@ class RelayMixin:
                     continue
                 self.confirm(label)
                 if a.go:
-                    self._execute(data, label, expect)
+                    self._execute(data, label, expect, held=self.holding)
                 else:
                     self.say(f'(dry run) {label}')
                 expect = data[-1]
@@ -1141,11 +1281,64 @@ class RelayMixin:
             raise Stop('no joint_states')
         if math.degrees(float(np.max(np.abs(q0 - q)))) < 1.0:
             return
+        # first straight up (tool orientation kept) when the goal is higher: a joint-space
+        # OMPL path from a low, reaching pose dips down before it rises
+        up = self._lift_path(q0, q, grip)
+        start = up[-1] if up else q0
         try:
-            path = self._ompl(q0, q, label, grip=grip)
+            path = self._ompl(start, q, label, grip=grip)
         except RelayFail as e:
             raise Stop(f'{e} (from the arm pose now)')
-        self._execute(path, label, expect=q0)
+        if up:
+            self._execute(up, f'{label}: straight up first', expect=q0)
+        self._execute(path, label, expect=start)
+
+    def _lift_path(self, q0, q, grip):
+        """Empty arm at q0 -> straight up (tool orientation kept) toward the TCP height of
+        q, at most --relay-lift-max, 5 mm steps, collision checked. [] = not needed (goal not
+        2 cm higher) or not possible (then OMPL from q0 as before)."""
+        a = self.args
+        if a.relay_lift_max <= 0:
+            return []
+        T0, Tq = self._rl_arm.fk(q0), self._rl_arm.fk(q)
+        dz = min(float(Tq[2, 3] - T0[2, 3]), a.relay_lift_max)
+        if dz < 0.02:
+            return []
+        p0, R0 = T0[:3, 3], T0[:3, :3]
+        out, qc = [], np.asarray(q0, float)
+        for i, p in enumerate(seg(p0, p0 + [0, 0, dz])):
+            qn = self._ik_R(p, R0, qc)
+            if qn is None or math.degrees(float(np.max(np.abs(qn - qc)))) > a.max_step_jump:
+                self.say(f'straight up first: stopped after {i * 5} mm (IK)')
+                break
+            if (i % 2 == 0) and self._contacts(qn, held=False, grip=grip):
+                self.say(f'straight up first: stopped after {i * 5} mm (collision)')
+                break
+            out.append(qn)
+            qc = qn
+        if out and self._contacts(out[-1], held=False, grip=grip):
+            out = out[:-1]
+        return out if len(out) >= 4 else []
+
+    def _ik_R(self, p, R, q0):
+        """TCP at p with the orientation R (any), near q0, or None (as _ik_v)."""
+        get = self._fk_cached()
+
+        def f(q):
+            T = get(q)[0]
+            return np.r_[(T[:3, 3] - p) * 10, (T[:3, :3].T @ R - np.eye(3)).ravel() * 0.3]
+
+        def jac(q):
+            T, Z, O = get(q)
+            Rt, pt = T[:3, :3], T[:3, 3]
+            J = np.zeros((12, 6))
+            for i in range(6):
+                J[:3, i] = np.cross(Z[i], pt - O[i]) * 10
+                J[3:, i] = (-(Rt.T @ _skew(Z[i])) @ R).ravel() * 0.3
+            return J
+        r = least_squares(f, np.clip(q0, LO, HI), bounds=(LO, HI),
+                          **self._ik_opts(jac, get, q0))
+        return r.x if np.linalg.norm(r.fun) < 3e-3 else None
 
     # ------------------------------------------------------------------ poses
     def relay_d11_file(self):
