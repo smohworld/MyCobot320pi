@@ -337,8 +337,12 @@ def main():
            'each carry grid search stopped after this many points, one pass per value '
            '(e.g. 40,120); nothing -> everything without a cap (0 = no quick pass) [points]')
     g('--relay-end', choices=['home', 'stay'], default='home',
-      help='n / j / e / r: after the hand-over back to the home pose (the start pose / '
-           'search pose), then the gripper closed; stay = the arm stays where it ended')
+      help='n / j / e / r: after the hand-over back to the home pose (--relay-home), then '
+           'the gripper closed; stay = the arm stays where it ended')
+    g('--relay-home', type=lambda t: [float(v) for v in t.split(',')], default=[],
+      help='n / j / e / r: the home pose they end in (and go to after an error before '
+           'carrying), J1..J6 [deg]; empty = the arm pose when the program started (not '
+           'moved by the camera re-centring of a detection)')
     g('--relay-spot-r', type=lambda t: [float(v) for v in t.split(',')], default=[0.20, 0.23],
       help='n / j: automatic desk spots: radius range from the base axis rmin,rmax [m]')
     g('--relay-max-spots', type=int, default=5,
@@ -355,9 +359,15 @@ def main():
            'tray clearance (--relay-plan-pad)')
     g('--relay-speed', type=float, default=0.35,
       help='n / j / e / r: fastest joint speed of the relay paths, empty arm [rad/s]')
-    g('--relay-held-speed', type=float, default=0.25,
+    g('--relay-home-speed', type=float, default=0.7,
+      help='n / j / e / r: fastest joint speed of the empty way home after the hand-over '
+           '(OMPL part; the straight-up part beside the tray stays at --relay-speed) [rad/s]')
+    g('--relay-home-tcp-speed', type=float, default=0.12,
+      help='n / j / e / r: the same, fastest finger tip speed (--relay-accel scaled alike) '
+           '[m/s]')
+    g('--relay-held-speed', type=float, default=0.35,
       help='n / j / e / r: the same while holding the tray (--relay-tcp-speed scaled alike) '
-           '[rad/s]')
+           '[rad/s] (0.25 tried on the real arm 11-25: no less error off the path)')
     g('--relay-grasp-tries', type=int, default=3,
       help='n / j: different grasp poses (IK branches) tried on D11 when the pull out from '
            'one hits the rack / the arm itself [count]')

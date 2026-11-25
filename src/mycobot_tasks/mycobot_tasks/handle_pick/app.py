@@ -41,6 +41,15 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
                   + ('the shelf region (regions.yaml)' if r else 'the default (desk top)'),
                   flush=True)
         App.__init__(self, node, args)
+        # n / j / e / r end pose: fixed (--relay-home, else the arm pose at program start).
+        # self.home itself moves with every camera re-centring (look_at), e.g. over the
+        # TurtleBot box after r, so the relay would end there instead of at home
+        if args.relay_home:
+            if len(args.relay_home) != 6:
+                raise SystemExit('--relay-home: 6 joint angles J1..J6 [deg]')
+            self.relay_home_q = np.radians(np.array(args.relay_home, float))
+        else:
+            self.relay_home_q = None if self.home is None else np.array(self.home, float)
         if self.use_scene:
             self.apply_scene()
         self.replay_q = None
@@ -142,6 +151,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             return
         kind = 'LIN' if line else 'PTP'
         self.say(f'moving: {name} ({kind})')
+        self.mv.label(f'{name} ({kind})', getattr(self, 'track_mode', ''), self.holding)
         v = velocity or (a.slow_velocity if slow else a.velocity)
         acc = a.accel
         if line:
@@ -298,6 +308,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
            else run: the tray on the desk.
         2. TurtleBot marker measured now, desk -> TurtleBot planned and run (no plan: the
            tray stays on the desk, the arm back where n started, error)."""
+        self.track_mode = 'n'
         a = self.args
         if self.holding:
             raise Stop('holding the tray: put it down first')
@@ -376,6 +387,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             self._remove_world('relay_tray')
         finally:
             a.table_z = keep
+            self.track_mode = ''
 
     def _relay_desk_tray(self):
         """The tray standing on the desk: --layout-poses (simulation) -> --relay-desk or None
@@ -428,6 +440,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
         """e: desk -> TurtleBot (the second part of n alone): the tray on the desk measured
         (camera, from here), the TurtleBot marker measured, desk -> TurtleBot planned (tray
         turned far from the arm base when needed) and run. No plan: nothing moves, error."""
+        self.track_mode = 'e'
         a = self.args
         if self.holding:
             raise Stop('holding the tray: put it down first')
@@ -461,11 +474,13 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             self._remove_world('relay_tray')
         finally:
             a.table_z = keep
+            self.track_mode = ''
 
     def act_bot_to_desk(self):
         """r: TurtleBot -> desk: the tray in the box measured (camera), put on the desk at
         --relay-desk (else the planner picks a desk spot: --relay-spot-r, at most
         --relay-max-spots tried); planned as desk -> TurtleBot and run backwards."""
+        self.track_mode = 'r'
         a = self.args
         if self.holding:
             raise Stop('holding the tray: put it down first')
@@ -511,11 +526,13 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             self._remove_world('relay_tray')
         finally:
             a.table_z = keep
+            self.track_mode = ''
 
     def act_bot_to_d11(self):
         """j: TurtleBot -> shelf D11 through a desk spot (relay.py): the tray on the
         TurtleBot is measured (camera), D11 must be empty: the tray goes to the layout pose
         --relay-d11; planned as D11 -> TurtleBot and run backwards."""
+        self.track_mode = 'j'
         a = self.args
         if self.holding:
             raise Stop('holding the tray: put it down first')
@@ -553,6 +570,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             self._remove_world('relay_tray')
         finally:
             a.table_z = keep
+            self.track_mode = ''
 
     def transfer(self, pin, plan, dst, remember=True):
         """Run a planned pick + place: pick -> up -> carry -> put down -> open -> up
@@ -609,6 +627,8 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, PlanMixin, RelayMixin, BaseApp
             start = None if q0 is None else dict(zip(ARM_JOINTS, q0))
             if start is not None and 'gripper_controller' in self.node.js:
                 start['gripper_controller'] = self.node.js['gripper_controller']
+            self.mv.label('carry ' + ' -> '.join(names), getattr(self, 'track_mode', ''),
+                          True)
             ok, msg = self.mv.move_sequence(ARM_JOINTS, [L[n][1] for n in names], radii,
                                             a.lin_velocity, a.lin_accel, start=start)
             self._check()

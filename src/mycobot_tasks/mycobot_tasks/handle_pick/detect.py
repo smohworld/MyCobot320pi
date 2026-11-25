@@ -215,10 +215,22 @@ class DetectMixin:
         if spread > a.max_spread:
             raise Stop(f'handle position not stable ({spread * 1000:.1f} mm spread > '
                        f'--max-spread): the tray or the arm is moving?')
+        # provisional (r / j: the first, high search view over the TurtleBot, measured again
+        # from --bot-close-view): small markers, the tilt / spacing poor -> checked on the
+        # close measurement only
+        prov = getattr(self, 'detect_provisional', False)
+        bad = []
         if tilt > a.max_tilt:
+            bad.append(f'tilt {tilt:.0f} deg > --max-tilt')
+        if a.spacing and abs(spacing - a.spacing) > a.max_spacing_err:
+            bad.append(f'L-R {spacing * 1000:.1f} mm, expected {a.spacing * 1000:.1f}')
+        if prov and bad:
+            self.say('first (high) view: ' + ', '.join(bad) + ': only the position used, '
+                     'checked again from closer')
+        if not prov and tilt > a.max_tilt:
             raise Stop(f'marker plane tilted {tilt:.0f} deg (> --max-tilt) seen from straight '
                        'above: the tray is not flat; grasping straight down refused')
-        if a.spacing and abs(spacing - a.spacing) > a.max_spacing_err:
+        if not prov and a.spacing and abs(spacing - a.spacing) > a.max_spacing_err:
             raise Stop(f'marker centres {spacing * 1000:.1f} mm apart (tile-edge gap '
                        f'{(spacing - a.tile_size) * 1000:.1f} mm), expected '
                        f'{a.spacing * 1000:.1f} mm (--gap {(a.spacing - a.tile_size) * 1000:.1f}'
@@ -227,7 +239,7 @@ class DetectMixin:
         if getattr(self, 'auto_height', False):     # d / p: surface = handle top - tray
             a.table_z = float(p[2]) - a.tray_height
         self.set_heights(p[2] - a.table_z)
-        self.pin = dict(p=p, yaw=yaw)
+        self.pin = dict(p=p, yaw=yaw, provisional=prov)
         self._last_pin = p.copy()
         self.log_detection('tray', two)
         if a.save and not a.replay:

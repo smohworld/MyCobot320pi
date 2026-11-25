@@ -88,6 +88,8 @@ class TrajJob:
         self.off_max = np.zeros(6)    # per joint, at the worst sample
         self.off_norm = 0.0           # largest |actual - nearest path point| [deg]
         self.off_t = 0.0
+        self.label = ('', '', '')     # (mode, held, label) from the track_label topic
+        self.ff_path = False          # ff_along_path when accepted (see _path_bias)
 
     @property
     def duration(self):
@@ -210,6 +212,13 @@ class MyCobotDriver(Node):
             raise ValueError('ff_sin_gain must be 18 values (6x3, row-major)')
         self.ff_sin = self.ff_sin.reshape(6, 3)
         self.ff_min_move = p('ff_min_move_deg', 1.0).value         # smaller moves: no dir term
+        # ff_along_path: while the trajectory runs, the gravity part (ff_sin_gain) from the
+        # pose of each streamed point and the direction part from the joint's direction at
+        # that moment (joints moving less than ff_min_move_deg in all: none, as before),
+        # instead of the final pose / sign(final - start) for the whole path. The final
+        # command and the settling keep the old bias. false = the old behaviour exactly.
+        # Settable at run time (ros2 param set ... ff_along_path true).
+        self.ff_along_path = bool(p('ff_along_path', False).value)
         # CSV of every trajectory (start, target, move, bias, first-settle error, final error)
         # to re-fit the feedforward. '' = off.
         self.ff_log = os.path.expanduser(p('ff_log_csv', '').value)
@@ -277,6 +286,11 @@ class MyCobotDriver(Node):
 
         cb = ReentrantCallbackGroup()
         self.js_pub = self.create_publisher(JointState, 'joint_states', 10)
+        # track_label (std_msgs/String 'unix time<TAB>mode<TAB>held 0/1<TAB>label', sent by
+        # the task right before a move): written into track_log_csv with that trajectory
+        from std_msgs.msg import String
+        self._label = None
+        self.create_subscription(String, 'track_label', self._on_label, 10)
         self.arm_server = ActionServer(
             self, FollowJointTrajectory, 'arm_controller/follow_joint_trajectory',
             execute_callback=self._exec_traj, goal_callback=self._goal_traj,
@@ -381,6 +395,8 @@ class MyCobotDriver(Node):
                 self.fast_tol = float(prm.value)
             elif prm.name == 'fast_still_time':
                 self.fast_still = float(prm.value)
+            elif prm.name == 'ff_along_path':
+                self.ff_along_path = bool(prm.value)
         return SetParametersResult(successful=True)
 
     def _stop_all(self):
@@ -504,7 +520,8 @@ class MyCobotDriver(Node):
 
         if t < job.duration:
             ref = job.sample(t + self.lookahead)
-            target = self._clip_cmd(ref + job.bias, ref)
+            bias = self._path_bias(job, t, ref) if job.ff_path else job.bias
+            target = self._clip_cmd(ref + bias, ref)
             if job.last_sent is None or np.max(np.abs(target - job.last_sent)) >= self.min_step_deg:
                 self._send_angles(target)
                 job.last_sent = target
@@ -562,6 +579,19 @@ class MyCobotDriver(Node):
             else:
                 self._finish_goal(job, emax)
 
+    def _path_bias(self, job, t, ref):
+        """ff_along_path: the feedforward for the streamed point ref (trajectory time t +
+        lookahead): gravity part from ref, direction part from where the joint goes next
+        (kept while it stands still)."""
+        d = job.sample(t + self.lookahead + 0.05) - ref
+        moving = (np.abs(d) > 0.02) & (job.dir_sign != 0)
+        job.dir_sign = np.where(moving, np.sign(d), job.dir_sign)
+        c2 = math.radians(ref[1])
+        c3 = c2 + math.radians(ref[2])
+        c4 = c3 + math.radians(ref[3])
+        return (job.ff_static + self.ff_sin @ np.array([math.sin(c2), math.sin(c3), math.sin(c4)])
+                + self.ff_dir * job.dir_sign)
+
     def _clip_cmd(self, cmd, ref):
         """Keep a command within max_correction_deg of the trajectory point ref and in the
         limits (ref itself may lie outside them, see _build_job)."""
@@ -596,6 +626,15 @@ class MyCobotDriver(Node):
         if n > job.off_norm:
             job.off_norm, job.off_max, job.off_t = n, np.abs(dev[k]), t
 
+    def _on_label(self, msg):
+        parts = msg.data.split('\t', 3)
+        if len(parts) != 4:
+            return
+        try:
+            self._label = (float(parts[0]), parts[1], parts[2], parts[3])
+        except ValueError:
+            pass
+
     def _log_track(self, job):
         if not self.track_log or job.trk_n == 0:
             return
@@ -607,12 +646,16 @@ class MyCobotDriver(Node):
             head = (['time', 'connection', 'duration_s', 'samples', 't_max_s', 'corrections',
                      'off_norm', 'off_t_s']
                     + [f'{k}{j}' for k in ('max', 'rms', 'off', 'vmax', 'start', 'final')
-                       for j in range(1, 7)])
+                       for j in range(1, 7)]
+                    + ['mode', 'held', 'label', 'ff_path'])
             if os.path.exists(self.track_log):          # older columns: kept aside
                 with open(self.track_log) as f:
-                    first = f.readline().strip().split(',')
+                    first = next(csv.reader(f), [])
                 if first != head:
-                    os.replace(self.track_log, self.track_log + '.v1')
+                    k = 1                               # never over an older copy
+                    while os.path.exists(f'{self.track_log}.v{k}'):
+                        k += 1
+                    os.replace(self.track_log, f'{self.track_log}.v{k}')
             new = not os.path.exists(self.track_log)
             with open(self.track_log, 'a', newline='') as f:
                 w = csv.writer(f)
@@ -623,7 +666,8 @@ class MyCobotDriver(Node):
                             f'{job.off_norm:.3f}', f'{job.off_t:.2f}']
                            + [f'{v:.3f}' for v in np.concatenate([
                                job.trk_max, np.sqrt(job.trk_sq / job.trk_n), job.off_max, vmax,
-                               job.positions[0], job.positions[-1]])])
+                               job.positions[0], job.positions[-1]])]
+                           + list(job.label) + [int(job.ff_path)])
         except OSError as e:
             self.get_logger().warn(f'track_log_csv write failed: {e}')
 
@@ -835,6 +879,9 @@ class MyCobotDriver(Node):
             pos = np.vstack([q_now, pos])
         job = TrajJob(times * scale, pos)
         job.settle_mode = self.settle_mode
+        lb = self._label
+        if lb is not None and time.time() - lb[0] < 120.0:
+            job.label = lb[1:]
         move = pos[-1] - pos[0]
         c2 = math.radians(pos[-1][1])
         c3 = c2 + math.radians(pos[-1][2])
@@ -843,6 +890,9 @@ class MyCobotDriver(Node):
                     + self.ff_sin @ np.array([math.sin(c2), math.sin(c3), math.sin(c4)])
                     + self.ff_dir * np.where(np.abs(move) >= self.ff_min_move,
                                              np.sign(move), 0.0))
+        job.ff_path = self.ff_along_path
+        job.ff_static = self.ff_bias + self.ff_gain @ pos[-1]
+        job.dir_sign = np.where(np.abs(move) >= self.ff_min_move, np.sign(move), 0.0)
         return job, ''
 
     def _exec_traj(self, goal_handle):

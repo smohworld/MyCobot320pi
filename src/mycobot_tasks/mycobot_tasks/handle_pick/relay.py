@@ -1089,16 +1089,23 @@ class RelayMixin:
                 out.append(({'grasp': 'release', 'release': 'grasp'}[kind], None, (lb, lf)))
         return out
 
-    def _times(self, pts, held=False):
+    def _times(self, pts, held=False, fast=False):
         """Durations of the steps between joint points pts: smooth start / stop along the
         path. Path metric per step = finger tip travel + tool rotation x --relay-lever (a
         tray edge); speed <= --relay-tcp-speed and every joint <= --relay-speed, speeding
-        up / slowing down at <= --relay-accel (forward / backward pass), 0 at both ends."""
+        up / slowing down at <= --relay-accel (forward / backward pass), 0 at both ends.
+        fast: the empty way home after the hand-over (--relay-home-speed /
+        --relay-home-tcp-speed, the accel scaled like the tip speed)."""
         a = self.args
-        # holding the tray: slower (--relay-held-speed; the real arm lags ~0.12 s, its error
-        # off the planned path grows with the speed), the finger tip limit scaled alike
+        # holding the tray: --relay-held-speed (default = the empty speed: on the real arm
+        # 0.25 did not lower the error off the path, 1.20 vs 1.22 deg, mostly J2), the
+        # finger tip limit scaled alike
         js = a.relay_held_speed if held else a.relay_speed
         ts = a.relay_tcp_speed * (js / a.relay_speed if a.relay_speed > 0 else 1.0)
+        acc = a.relay_accel
+        if fast and not held:
+            js, ts = a.relay_home_speed, a.relay_home_tcp_speed
+            acc = a.relay_accel * (ts / a.relay_tcp_speed if a.relay_tcp_speed > 0 else 1.0)
         T = [self._rl_arm.fk(q) for q in pts]
         n = len(pts) - 1
         if n < 1:
@@ -1115,13 +1122,13 @@ class RelayMixin:
         v = [0.0] * (n + 1)
         for i in range(n):                                  # speeding up
             cap = min(lim[i], lim[i + 1]) if i + 1 < n else 0.0
-            v[i + 1] = min(cap, math.sqrt(v[i] ** 2 + 2 * a.relay_accel * m[i]))
+            v[i + 1] = min(cap, math.sqrt(v[i] ** 2 + 2 * acc * m[i]))
         for i in reversed(range(n)):                        # slowing down
-            v[i] = min(v[i], math.sqrt(v[i + 1] ** 2 + 2 * a.relay_accel * m[i]))
+            v[i] = min(v[i], math.sqrt(v[i + 1] ** 2 + 2 * acc * m[i]))
         out = []
         for i in range(n):
             s = v[i] + v[i + 1]
-            out.append(max(0.01, 2 * m[i] / s if s > 1e-6 else 2 * math.sqrt(m[i] / a.relay_accel)))
+            out.append(max(0.01, 2 * m[i] / s if s > 1e-6 else 2 * math.sqrt(m[i] / acc)))
         return out
 
     def relay_summary(self, steps, title):
@@ -1157,7 +1164,7 @@ class RelayMixin:
             print(ln, flush=True)
 
     # ------------------------------------------------------------------ running
-    def _execute(self, qs, label, expect=None, held=False):
+    def _execute(self, qs, label, expect=None, held=False, fast=False):
         from builtin_interfaces.msg import Duration
         from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
         a = self.args
@@ -1172,7 +1179,7 @@ class RelayMixin:
         if off > 3.0:
             raise Stop(f'{label}: the arm is {off:.1f} deg away from the planned start')
         pts = [q0] + list(qs)
-        dts = [dt / self.sim_speed() for dt in self._times(pts, held)]
+        dts = [dt / self.sim_speed() for dt in self._times(pts, held, fast)]
         jt, t = JointTrajectory(joint_names=list(ARM_JOINTS)), 0.0
         for v, dt in zip(pts, [0.0] + dts):
             t += dt
@@ -1180,6 +1187,8 @@ class RelayMixin:
                 positions=[float(x) for x in v],
                 time_from_start=Duration(sec=int(t), nanosec=int((t % 1.0) * 1e9))))
         self.say(f'moving: {label} ({len(qs)} points, {t:.1f} s)')
+        self.mv.label(label + (' [fast]' if fast and not held else ''),
+                      getattr(self, 'track_mode', ''), held)
         ok, msg = self.mv.execute(jt)
         self._check()
         if not ok:
@@ -1232,7 +1241,7 @@ class RelayMixin:
             self.node.get_logger().error(first)
         except Exception:  # noqa: BLE001
             pass
-        target = self.home if self.home is not None else q_start
+        target = self.relay_home_q if self.relay_home_q is not None else q_start
         if self.args.go and target is not None and not self.holding:
             self.say('back to home (error)')
             try:
@@ -1247,12 +1256,12 @@ class RelayMixin:
         a = self.args
         if a.relay_end != 'home':
             return
-        if self.home is None:
+        if self.relay_home_q is None:
             self.say('no home pose: the arm stays here')
             return
         self.confirm('back to home, then close the gripper')
         if a.go:
-            self.relay_go_to(self.home, 'back to home', grip=grip)
+            self.relay_go_to(self.relay_home_q, 'back to home', grip=grip, fast=True)
             self._fingers(CLOSED)
         else:
             self.say('(dry run) back to home, gripper closed')
@@ -1268,11 +1277,12 @@ class RelayMixin:
         """--sim-speed in the simulation (fake driver), else 1."""
         return max(0.05, self.args.sim_speed) if self.conn in ('fake', None) else 1.0
 
-    def relay_go_to(self, q, label, grip=None):
+    def relay_go_to(self, q, label, grip=None, fast=False):
         """From wherever the arm is to the first planned point: OMPL (empty arm, up to 6
         tries, every 2 deg re-checked: the start over D11 is a narrow gap between the rack
         and the mast where one OMPL path often fails MoveIt's own path check).
-        grip: the gripper opening on the way (default --grasp-open)."""
+        grip: the gripper opening on the way (default --grasp-open). fast: the OMPL part at
+        --relay-home-speed (the straight-up part beside the tray just put down stays slow)."""
         grip = self.args.grasp_open if grip is None else grip
         self._fingers(grip)
         self.wait_still()
@@ -1291,7 +1301,7 @@ class RelayMixin:
             raise Stop(f'{e} (from the arm pose now)')
         if up:
             self._execute(up, f'{label}: straight up first', expect=q0)
-        self._execute(path, label, expect=start)
+        self._execute(path, label, expect=start, fast=fast)
 
     def _lift_path(self, q0, q, grip):
         """Empty arm at q0 -> straight up (tool orientation kept) toward the TCP height of

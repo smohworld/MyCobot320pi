@@ -331,6 +331,8 @@ class App:
             return
         self.say(f'moving: {name}')
         v = velocity or (self.args.slow_velocity if slow else self.args.velocity)
+        self.mv.label(f'{name} (OMPL)', getattr(self, 'track_mode', ''),
+                      getattr(self, 'holding', False))
         ok, msg = self.mv.move_joints(ARM_JOINTS, q, v, self.args.accel)
         self._check()
         if not ok:

@@ -52,6 +52,17 @@ class MoveItClient:
                                 callback_group=cb)
         self.exe = ActionClient(node, ExecuteTrajectory, 'execute_trajectory',
                                 callback_group=cb)
+        from std_msgs.msg import String
+        self._label_msg = String
+        self._label_pub = node.create_publisher(String, 'track_label', 10)
+
+    def label(self, text, mode='', held=False):
+        """Name of the next motion(s) for the driver's track_log_csv (mode, label, held
+        columns): sent right before a move; kept by the driver until the next one (or 120 s)."""
+        import time
+        t = str(text).replace('\t', ' ').replace('\n', ' ')
+        self._label_pub.publish(self._label_msg(
+            data=f'{time.time():.3f}\t{mode}\t{int(bool(held))}\t{t}'))
 
     def wait_ready(self, timeout=10.0):
         return (self.ik.wait_for_service(timeout_sec=timeout)

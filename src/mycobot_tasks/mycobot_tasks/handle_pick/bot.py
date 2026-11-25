@@ -373,10 +373,14 @@ class BotMixin:
                         raise
                     print(f'  {e}: detecting from here', flush=True)
             self.expect_on_bot = True
+            # measured again from closer (--bot-close-view): this first one only for the
+            # position (tilt / spacing checked on the close one)
+            self.detect_provisional = bool(a.go and a.bot_close_view > 0)
             try:
                 pin = self.detect_pin(region='bot')
             finally:
                 self.expect_on_bot = False
+                self.detect_provisional = False
             # box floor from the measured handle top, TurtleBot (scene) from the tray
             a.table_z = float(pin['p'][2]) - a.tray_height
             self.set_heights(a.tray_height)
@@ -393,13 +397,14 @@ class BotMixin:
         a = self.args
         if not a.go or a.bot_close_view <= 0:
             return pin
+        prov = pin.get('provisional', False)   # first view unchecked: no fallback to it
         z = float(pin['p'][2]) - a.tray_height
         try:
             self.look_over(float(pin['p'][0]), float(pin['p'][1]), z,
                            'closer over the tray in the TurtleBot box', view=a.bot_close_view)
         except Stop as e:
-            if self._abort.is_set():
-                raise
+            if self._abort.is_set() or prov:
+                raise Stop(f'closer view over the TurtleBot tray not possible: {e}')
             self.say(f'closer view over the TurtleBot tray not possible ({str(e).splitlines()[0]}): '
                      'the first measurement is used')
             return pin
@@ -407,8 +412,8 @@ class BotMixin:
         try:
             pin2 = self.detect_pin(region='bot')
         except Stop as e:
-            if self._abort.is_set():
-                raise
+            if self._abort.is_set() or prov:
+                raise Stop(f'closer view: {e}')
             self.say(f'closer view: tray not measured ({str(e).splitlines()[0]}): the first '
                      'measurement is used')
             return pin
