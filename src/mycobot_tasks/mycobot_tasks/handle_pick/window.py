@@ -19,6 +19,8 @@ def view(app):
             ord('r'): ('TurtleBot -> desk', app.act_bot_to_desk),
             ord('d'): ('detect (any height)', app.act_detect),
             ord('s'): ('search pose', app.act_search)}
+    if hasattr(app, 'clear_desk_target'):
+        keys[ord('c')] = ('clear the RViz desk target', app.clear_desk_target)
     live = MarkerPose(app.K, app.D, args.marker_size)    # own detector (window thread)
     after = 0.0
     while True:
@@ -86,6 +88,10 @@ def view(app):
                             if uv:
                                 cv2.drawMarker(vis, uv, col, cv2.MARKER_TILTED_CROSS, 18, 2)
                 _text(vis, app.status, (10, 25), 0.55)
+                if getattr(args, 'relay_desk', None):
+                    x_, y_, yd_ = args.relay_desk
+                    _text(vis, f'desk target (RViz): ({x_ * 1000:.0f}, {y_ * 1000:.0f}) mm, L->R '
+                               f'{yd_:.0f} deg  (c = clear)', (10, 126), 0.5)
                 _text(vis, f"{'' if args.go else 'DRY RUN  '}{'BUSY  ' if app.busy else ''}"
                            f"{'HOLDING  ' if app.holding else ''}{'AUTO' if app.auto else 'STEP'}",
                       (10, 50), 0.5)
@@ -93,7 +99,7 @@ def view(app):
                     _text(vis, f'NEXT: {app.prompt}', (10, 78), 0.55)
                     _text(vis, 'Enter = go   x = cancel   a = auto', (10, 102), 0.55)
                 _text(vis, 'n D11->bot  j bot->D11  e desk->bot  r bot->desk  d detect  s search  '
-                           'a auto  x stop  q quit',
+                           'c clear target  a auto  x stop  q quit',
                       (10, vis.shape[0] - 12), 0.45)
             except Exception as e:  # noqa: BLE001  (a drawing error must not end the app)
                 if not getattr(app, '_draw_err', False):

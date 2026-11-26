@@ -233,6 +233,31 @@ class BotMixin:
             return last[1]
         if not (search and a.go):
             return None
+        # open fingers (opened for the tray measurement) may touch the Burger model: closed
+        # before any camera move (else every motion starts in collision, 11-26)
+        if self.node.js.get('gripper_controller', 0.0) >= 0.5:
+            self.gripper(False)
+        # the tray direction tells the box axis: the marker is in front of or behind it,
+        # --heading-dist away: look there first (user 11-26), the region scan only after
+        rb = self.region('bot')
+        for i, xy in enumerate(getattr(self, '_heading_hint', None) or []):
+            self._check()
+            self.say(f'Burger heading marker ID {mid} not seen: looking at the '
+                     f'{"first" if i == 0 else "other"} end of the box ({xy[0] * 1000:.0f}, '
+                     f'{xy[1] * 1000:.0f}) mm')
+            try:
+                with self.bot_search():
+                    self.look_over(xy[0], xy[1], rb['z'] if rb else -0.28,
+                                   f'heading marker look {i + 1}', oblique=False,
+                                   view=self.view_height(rb) if rb else None)
+            except Stop as e:
+                if self._abort.is_set():
+                    raise
+                self.say(f'  {str(e).splitlines()[0]}')
+                continue
+            h = look()
+            if h is not None:
+                return h
         self.say(f'Burger heading marker ID {mid} not seen: scanning the TurtleBot area for it')
         try:
             # Burger pose unknown (or from this marker): the TurtleBot area kept out
@@ -273,7 +298,20 @@ class BotMixin:
         direction (user 11-26: the tray may lie turned in the box) nor the last saved
         detection (the Burger is moved between runs). Heading marker not found -> Stop."""
         a = self.args
-        h = self.heading_marker(search=True)
+        # where to look when it is not in view: both ends of the box axis (tray L -> R alone
+        # is +-180 deg): +x-most first (the Burger usually faces base +x)
+        y0 = pin['yaw'] - math.radians(a.bot_yaw_offset)
+        sx, sy = self._bot_side_vec()
+        hint = []
+        for k in (0.0, math.pi):
+            c, s_ = math.cos(y0 + k), math.sin(y0 + k)
+            b = np.array([c * sx - s_ * sy, s_ * sx + c * sy])
+            hint.append(np.asarray(pin['p'][:2], float) + a.heading_dist * b)
+        self._heading_hint = sorted(hint, key=lambda v: -v[0])
+        try:
+            h = self.heading_marker(search=True)
+        finally:
+            self._heading_hint = None
         if h is None:
             raise Stop(f'TurtleBot from the tray: Burger heading marker ID {a.bot_heading_id} '
                        'not found (TurtleBot area scanned): its direction is unknown, nothing '
@@ -402,6 +440,10 @@ class BotMixin:
             return pin
         prov = pin.get('provisional', False)   # first view unchecked: no fallback to it
         z = float(pin['p'][2]) - a.tray_height
+        if self.node.js.get('gripper_controller', 0.0) >= 0.5:
+            # open fingers are wide: going down beside the Burger they touched its model
+            # (11-26, gripper_left1); closed for the move, detect_pin opens them again
+            self.gripper(False)
         try:
             self.look_over(float(pin['p'][0]), float(pin['p'][1]), z,
                            'closer over the tray in the TurtleBot box', view=a.bot_close_view)

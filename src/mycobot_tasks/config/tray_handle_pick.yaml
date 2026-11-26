@@ -58,11 +58,12 @@ turtlebot:
   bot_marker_size: 0.07              # TurtleBot 마커 한 변 [m]
   bot_heading_id: 28                 # 라이다 뒤 방향 마커 ID (-1 = 끔: 버거는 base +x를 본다고 가정)
   bot_heading_size: 0.0225           # 방향 마커 한 변 [m] (타일 30 mm, 검은 사각 22.5 mm)
+  heading_dist: 0.125                # 방향 마커는 트레이 손잡이에서 상자 축으로 이만큼 (못 보면 앞/뒤 두 곳을 먼저 봄) [m]
   heading_keep_s: 60.0               # 이번 자세에서 안 보이면 이 시간 안에 본 방향 마커 위치를 씀 [s]
   bot_marker_dz: 0.0                 # 마커 면이 트레이 놓는 면보다 이만큼 위 [m] (0 = 박스 바닥)
   bot_place_offset: [0.0, 0.0, 0.0]  # 놓는 점 = 마커 중심 + dx,dy,dz [m]
   bot_offset_frame: marker           # bot_place_offset 좌표계: marker / base
-  bot_yaw_offset: 90.0               # 트레이 L -> R = 마커 +x에서 이만큼 회전 [deg]
+  bot_yaw_offset: 0.0                # 트레이 L -> R = 마커 +x에서 이만큼 회전 [deg] (11-26: 상자 16 cm 변이 마커 x -> 선반 트레이도 0, 사방 2.5~3 cm 여유; 90이면 벽까지 5 mm)
   bot_box_offset: [0.0, 0.0]         # 장면의 박스 중심 = 마커 중심 + dx,dy (마커 좌표) [m]
   bot_keepout_h: 0.222               # TurtleBot 위치를 모를 때 그 영역 전체를 이 높이 장애물로 [m]
   bot_keepout_margin: 0.03           # 그 영역을 사방으로 이만큼 키움 [m]
@@ -83,7 +84,7 @@ gripper:
   grip_settle: 0.8     # 닫은 뒤 이만큼 기다렸다 손가락 간격 읽기 [s]
   min_grip_gap: 1.5    # 닫은 간격이 이보다 작으면 못 잡은 것 [mm]
   full_open_mm: 100.0  # 벌림 1.0일 때 손가락 간격 [mm]
-  place_drop: 0.0015   # 내려놓을 때 잡은 높이보다 이만큼 위에서 열기 [m]
+  place_drop: 0.001    # 내려놓을 때 이만큼 띄워서 열기 [m] (버거 상자 + 책상, 11-26: 책상에도 적용, 1.5 -> 1 mm)
 
 # ---- 계획 장면 (place_scene)
 scene:
@@ -107,13 +108,15 @@ moveit:
 relay_plan:
   relay_tilt: 10.0                    # 운반 중 트레이 기울기 허용 [deg] (잡기 / 놓기는 수평)
   relay_tilt_weight: 0.05             # 기울기 안에서 수평 쪽으로 당기는 정도 (0 = 한계까지 아무 기울기)
+  relay_low_lift: 0.03                # 먼 책상 트레이(곧게 못 올림): 먼저 이만큼만 들고 [m]
+  relay_low_pull: [0.04, 0.08]        # 그 높이에서 베이스 쪽으로 이만큼 당긴 뒤 올림 (차례로) [m]
   relay_carry_z: 0.125                # 격자 위 운반 손끝 높이 (base z) [m] (11-26: 0.17 시험 -> 버거가 멀면 해 없음, 되돌림)
   relay_pull_r: 0.16                  # 선반에서 빼낸 트레이를 base 쪽으로 이 반지름까지 당김 [m]
   relay_grid: [-0.3, 0.3, -0.3, 0.3]  # 운반 격자 xmin, xmax, ymin, ymax [m] (2 cm 간격)
   relay_min_r: 0.12                   # base 축에서 이보다 가까운 격자점은 제외 [m]
   relay_grid_budget: [100]            # 책상 -> TurtleBot 빠른 시도: 격자 탐색 점 수 한도, 값마다 한 번 [점]
   relay_spot_r: [0.2, 0.23]           # 자동 책상 자리: base 축에서 반지름 범위 rmin, rmax [m] (11-26: 0.24-0.27 시험, 효과 없고 계획 느림 -> 되돌림)
-  relay_spots_bot: [[-0.12, -0.22], [-0.10, -0.25], [-0.08, -0.22]]  # e / r 책상 자리 (차례로 시도) [m]: base 오른쪽 뒤, 포트 쪽(뒤)을 안 지나감 (11-26). 'auto' = n / j처럼
+  relay_spots_bot: [[-0.20, -0.14], [-0.12, -0.22]]  # e / r 책상 자리 (차례로) [m]. r은 케이블(x -7.8 cm 선) 위에 못 놓음 -> (-0.20,-0.14) (시뮬 r 31 s / e 27 s, 베이스 15 mm). (-0.12,-0.22)는 케이블 위: e(집기)만 됨. 느려서 뺌: (-0.19,-0.17) r 104 s, (-0.18,-0.20)/(-0.22,-0.11) r 120 s 초과 (11-26)
   relay_max_spots: 5                  # 시도할 책상 자리 수
   relay_grasp_tries: 3                # D11에서 시도할 다른 잡기 자세(IK 해) 수
   relay_plan_timeout: 120.0           # 계획 한 부분이 이보다 오래 걸리면 실패 [s] (0 = 무제한)
@@ -162,6 +165,7 @@ files:
 # ---- --tray-type 프리셋: 고른 종류의 값이 위 값을 덮어씀 (--config / 명령줄 값은 그대로)
 tray_types:
   # 선반 트레이 (가이드 부품 E): 몸체 150 x 100 x 56, 손잡이 바 91 mm (10 cm 변 방향), 손잡이 윗면 76 mm
-  shelf: {tray_height: 0.076, relay_tray: [0.15, 0.10, 0.056], bot_yaw_offset: 90.0, grasp_depth: 0.024, approach_above: 0.036}
+  shelf: {tray_height: 0.076, relay_tray: [0.15, 0.10, 0.056], bot_yaw_offset: 0.0, grasp_depth: 0.024, approach_above: 0.036}
   # 테스트 트레이 16 x 10: 손잡이 윗면 72 mm, 손잡이가 16 cm 변 방향. 몸체 높이 미측정 (56?)
-  test: {tray_height: 0.072, relay_tray: [0.10, 0.16, 0.056], bot_yaw_offset: 0.0, grasp_depth: 0.020, approach_above: 0.04}
+  test: {tray_height: 0.072, relay_tray: [0.16, 0.10, 0.056],  # 손잡이(ID10->11)는 10 cm 짧은 변 방향 (user 11-26; 11-19 메모는 반대였음)
+         bot_yaw_offset: 0.0, grasp_depth: 0.020, approach_above: 0.04}

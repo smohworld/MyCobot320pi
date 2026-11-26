@@ -69,10 +69,22 @@ import math
 import sys
 import threading
 
+import numpy as np
 
+
+# base footprint in the base frame (base.stl turned +90 deg): x -91.7..+61.1, y -58.3..+58.6 mm
+BASE_XY = (-0.0917, 0.0611, -0.0584, 0.0586)
+# power + LAN (user 11-26, RViz Publish Point on the LAN port: base (-0.078, -0.037, 0.030)):
+# the Pi ports sit in the open back corner of the base and face -y; the plugs go in along
+# -y and the cables run straight on to the desk -y edge. x, y (port face), z (over the base
+# bottom), cable diameter [m]. Mesh parts (base.dae turned +90 deg):
+#   RJ45 (LAN)  x -87..-70, y -46..-24, z 25..41 mm   power jack  x -92..-65, y -27..-9, z 4..22
+CABLE_PORTS = [[-0.078, -0.046, 0.033, 0.006],     # LAN (clicked)
+               [-0.078, -0.027, 0.013, 0.005]]     # power (mesh, below the LAN)
 SHELF_NAMES = ('shelf_base', 'shelf_xaxis', 'shelf_mast', 'shelf_fork', 'shelf_rack',
                'shelf_tray', 'shelf_stored')
-NAMES = ('desk', 'floor', 'desk_legs', 'robot_mount', 'turtlebot', 'bot_box',
+NAMES = ('desk', 'floor', 'desk_legs', 'robot_mount', 'base_cables', 'desk_cables',
+         'turtlebot', 'bot_box',
          'bot_box_walls') + SHELF_NAMES
 
 # Shelf geometry in the shelf frame [mm] (build guide; see the docstring for the frame).
@@ -313,6 +325,29 @@ def build(a):
             ([(x0m + x1m) / 2, sy * a.mount_y, (z0 + z1) / 2],
              [x1m - x0m + 2 * mm, a.mount_t + 2 * mm, z1 - z0 + 2 * mm], 0.0)
             for sy in (1, -1)]
+    if a.cables:
+        # power + LAN as lines (user 11-26): plugged into the Pi ports in the open back
+        # corner of the base along -y, then straight on (-y) down to the desk and ACROSS it
+        # to its -y edge. base_cables = plugs + the bend down; desk_cables = the part lying
+        # on the desk, drawn just over the desk box margin. Both obstacles: a tray put on
+        # the lying cables slid 4 cm / turned 26 deg on release (real r 11-26).
+        cm = a.cable_margin
+        y_edge = rot(-th, 0.0, a.edge_y)[1]                 # desk -y edge, base y
+        top_vis = desk_top + a.margin + 0.003
+        plugs, lying = [], []
+        L, P = a.cable_plug
+        for px, py, pz, d in a.cable_ports:
+            y0 = py - 0.002                                 # off the port face
+            plugs.append(([px, y0 - L / 2, pz], [P + 2 * cm, L, P + 2 * cm], 0.0))
+            yb = y0 - L - 0.03                              # bent down to the desk by here
+            zt = pz + d / 2
+            plugs.append(([px, (y0 - L + yb) / 2, desk_top + zt / 2 + (top_vis - desk_top) / 2],
+                          [d + 2 * cm, y0 - L - yb, zt + 2 * cm], 0.0))
+            if y_edge < yb:
+                lying.append(([px, (yb + y_edge) / 2, (desk_top + top_vis) / 2],
+                              [d + 2 * cm, yb - y_edge, top_vis - desk_top], 0.0))
+        objs['base_cables'] = plugs
+        objs['desk_cables'] = lying
     info = {'desk_top': desk_top, 'floor': floor_z}
     if a.with_bot:
         bot = a.bot if a.bot else rot(-th, 0.0, a.edge_y - 0.15)   # straight out from the edge
@@ -320,7 +355,7 @@ def build(a):
         yaw = math.radians(bot[2]) if len(bot) > 2 else math.atan2(cy, cx)
         c, s = math.cos(yaw), math.sin(yaw)
 
-        def at(u, v):          # box frame (u along the 20 cm side) -> base xy
+        def at(u, v):          # box frame (u along marker x = --box-inner[0]) -> base xy
             return [cx + c * u - s * v, cy + s * u + c * v]
 
         inner_floor = floor_z + a.box_floor
@@ -461,6 +496,8 @@ COLORS = {
     'desk_legs': (0.42, 0.29, 0.17, 1.0),     # darker brown
     'floor': (0.55, 0.55, 0.55, 0.35),        # light grey, see-through
     'robot_mount': (0.25, 0.25, 0.25, 1.0),   # dark grey
+    'base_cables': (0.05, 0.05, 0.05, 1.0),   # black
+    'desk_cables': (0.05, 0.05, 0.05, 1.0),
     'turtlebot': (0.15, 0.35, 0.95, 1.0),     # blue
     'bot_box': (0.55, 0.75, 1.0, 1.0),        # light blue
     'bot_box_walls': (0.55, 0.75, 1.0, 1.0),
@@ -629,11 +666,23 @@ def make_parser():
                    help='support bottom under the desk top [m] (14 cm tall in all)')
     a.add_argument('--mount-margin', type=float, default=0.003,
                    help='support plates grown by this [m] (small: they sit next to the base)')
+    a.add_argument('--no-cables', dest='cables', action='store_false',
+                   help='leave out the base cables (power / LAN at the base ports)')
+    a.add_argument('--cable-ports', default=CABLE_PORTS, type=lambda t: [
+        [float(v) for v in b.split(',')] for b in t.split(';') if b.strip()],
+                   help='x,y,z,d;... the Pi ports (facing -y): x, y of the port face, height '
+                        'over the base bottom, cable diameter [m] (default LAN clicked in RViz, '
+                        'power from the mesh)')
+    a.add_argument('--cable-plug', type=floats, default=[0.025, 0.016],
+                   help='plug length (out of the port, -x) and its square side [m]')
+    a.add_argument('--cable-margin', type=float, default=0.005, help='cables grown by this [m]')
     a.add_argument('--bot', type=floats, default=None,
                    help='box centre in base cx,cy[,yaw_deg]; yaw = box 20 cm side (marker +x). '
                         'Default: 15 cm out from the edge, straight out from the base, '
                         'pointing away from it')
-    a.add_argument('--box-inner', type=floats, default=[0.20, 0.16], help='inner L,W [m]')
+    a.add_argument('--box-inner', type=floats, default=[0.16, 0.20],
+                   help='inner L (marker x), W (marker y, toward the Burger) [m] (user 11-26: '
+                        'the 16 cm side lies along the Burger back; was 0.20,0.16)')
     a.add_argument('--box-depth', type=float, default=0.004, help='inner depth (walls) [m]')
     a.add_argument('--box-floor', type=float, default=0.026,
                    help='box inner floor (marker plane) height over the room floor [m] '

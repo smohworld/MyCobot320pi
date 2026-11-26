@@ -67,6 +67,23 @@ class ScanMixin:
                          if oblique else [])
         j1 = float(np.arctan2(y, x))
         seeds = [q_now] + [np.array([j1, j2, j3, 0.0, 0.0, 0.0]) for j2, j3 in SEEDS_J23]
+        bad = []          # poses whose motion failed (goal / path in collision): not again
+        for attempt in range(3):
+            h = self._look_over_try(x, y, z, name, oblique, view, exact, X, T_l6_tcp, q_now,
+                                    target, u, hs, pulls, seeds, j1, bad)
+            if h is not None:
+                return h
+            if not bad or len(bad) <= attempt:
+                break
+        raise Stop(f'no look-down pose over ({x * 1000:.0f}, {y * 1000:.0f}) mm'
+                   + (' with the held tray over the rim (raise the camera height)'
+                      if self.holding else ''))
+
+    def _look_over_try(self, x, y, z, name, oblique, view, exact, X, T_l6_tcp, q_now,
+                       target, u, hs, pulls, seeds, j1, bad):
+        """One IK search + move of look_over, poses in bad skipped -> camera height, or
+        None after a failed motion (its pose appended to bad) / no pose."""
+        a = self.args
         Xi = np.linalg.inv(X)
         min_tip = -np.inf
         if self.holding:          # the held tray's bottom stays over the rim + --carry-clear
@@ -90,6 +107,8 @@ class ScanMixin:
                         q = np.asarray(q)
                         if np.min(1 - np.abs(q) / LIMITS) <= 0.05:
                             continue
+                        if any(np.max(np.abs(q - b)) < np.radians(5.0) for b in bad):
+                            continue
                         cost = self.view_cost(q, q_now, j1)
                         found += 1
                         if best is None or cost < best[0]:
@@ -101,13 +120,19 @@ class ScanMixin:
                         print(f'  {name}: oblique view, camera {pull * 100:.0f} cm closer to '
                               f'the base ({math.degrees(math.atan2(pull, h)):.0f} deg)',
                               flush=True)
-                    self.move(name, best[1])
+                    try:
+                        self.move(name, best[1])
+                    except Stop as e:
+                        if 'motion failed' not in str(e) or self._abort.is_set() or len(bad) >= 2:
+                            raise
+                        bad.append(best[1])
+                        self.say(f'{name}: no safe motion to that arm pose '
+                                 f'({str(e).splitlines()[0][-60:]}): another pose')
+                        return None
                     self.wait_still(timeout=1.0)
                     time.sleep(0.2)
                     return h
-        raise Stop(f'no look-down pose over ({x * 1000:.0f}, {y * 1000:.0f}) mm'
-                   + (' with the held tray over the rim (raise the camera height)'
-                      if self.holding else ''))
+        return None
 
     def scan_region(self, name, seen):
         """Look down at every view point of the region until seen() is True.

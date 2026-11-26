@@ -213,6 +213,9 @@ def main():
            'the Burger direction from it every time (tray L->R alone is +-180); -1 = off '
            '(Burger assumed facing base +x)')
     G('--bot-heading-size', type=float, help='Burger heading marker side (black square) [m]')
+    G('--heading-dist', type=float,
+      help='heading marker this far from the tray handle along the box axis (where to look '
+           'first when it is not in view) [m]')
     G('--heading-keep-s', type=float,
       help='heading marker not in a view: the one seen up to this long ago is used [s]')
     G('--bot-marker-dz', type=float,
@@ -365,6 +368,12 @@ def main():
     G = grp['relay_speed'].add_argument
     G('--relay-speed', type=float,
       help='n / j / e / r: fastest joint speed of the relay paths, empty arm [rad/s]')
+    G('--relay-low-lift', type=float,
+      help='e / r: a far desk tray (straight up not possible) is lifted only this high first '
+           '[m]')
+    G('--relay-low-pull', type=lambda t: [float(v) for v in t.split(',')],
+      help='e / r: ... then pulled this far toward the base at that height (tried in order) '
+           'before going up [m]')
     G('--relay-held-speed', type=float,
       help='n / j / e / r: the same while holding the tray (--relay-tcp-speed scaled alike) '
            '[rad/s] (0.25 tried on the real arm 11-25: no less error off the path)')

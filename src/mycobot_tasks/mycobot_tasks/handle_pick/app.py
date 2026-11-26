@@ -58,6 +58,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             self.load_replay()
         self.mp = MarkerPose(self.K, self.D, args.marker_size)
         self.bot_mp = MarkerPose(self.K, self.D, args.bot_marker_size)
+        self._desk_target_setup()
         from mycobot_tasks.handle_pick import trays as tr
         self.id_l, self.id_r = tr.ids_of(args.tray)
         self.tray_lock = None             # the tray one detection measures (detect_pin)
@@ -349,6 +350,87 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
         raise Stop('no tray at the desk spot(s) (--relay-spots / --relay-desk):\n  '
                    + '\n  '.join(why))
 
+    # ------------------------------------------------------- desk target from RViz
+    def _desk_target_setup(self):
+        """RViz '2D Goal Pose' (topic goal_pose) on the desk = where r puts the tray and
+        where e looks for it: handle midpoint x, y and L -> R = the arrow (--relay-desk).
+        Shown as a box + arrow (Marker topic tray_desk_target). Window key c: cleared."""
+        from geometry_msgs.msg import PoseStamped
+        from rclpy.qos import DurabilityPolicy, QoSProfile
+        from visualization_msgs.msg import Marker
+        self._Marker = Marker
+        qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._target_pub = self.node.create_publisher(Marker, 'tray_desk_target', qos)
+        self.node.create_subscription(PoseStamped, 'goal_pose', self._on_goal_pose, 10)
+        if self.args.relay_desk:
+            self._show_desk_target()
+
+    def _on_goal_pose(self, msg):
+        import math as _m
+        a = self.args
+        p, q = msg.pose.position, msg.pose.orientation
+        xyz = np.array([p.x, p.y, p.z])
+        yaw = 2.0 * _m.atan2(q.z, q.w)
+        fr = msg.header.frame_id or 'base'
+        if fr != 'base':
+            T = self.node.T('base', fr)
+            if T is None:
+                self.say(f'desk target: no TF base -> {fr}, ignored')
+                return
+            xyz = T[:3, :3] @ xyz + T[:3, 3]
+            d = T[:3, :3] @ np.array([_m.cos(yaw), _m.sin(yaw), 0.0])
+            yaw = _m.atan2(d[1], d[0])
+        x, y, yd = float(xyz[0]), float(xyz[1]), _m.degrees(yaw)
+        r = _m.hypot(x, y)
+        try:
+            ok = self.on_desk((x, y), yaw + _m.radians(a.grip_yaw_offset))
+        except Exception:  # noqa: BLE001  (desk geometry not ready: checked at planning)
+            ok = True
+        if not ok:
+            self.say(f'desk target ({x * 1000:.0f}, {y * 1000:.0f}) mm, L->R {yd:.0f} deg: the '
+                     'tray would not be on the desk there, ignored')
+            return
+        a.relay_desk = [x, y, yd]
+        self.say(f'desk target set from RViz: tray handle ({x * 1000:.0f}, {y * 1000:.0f}) mm, '
+                 f'L->R {yd:.0f} deg, {r * 1000:.0f} mm from the base (r puts it here, e looks '
+                 'here; c = clear)' + ('' if 0.19 <= r <= 0.28 else
+                                       '  WARNING: outside ~190..280 mm, may not be planned'))
+        self._show_desk_target()
+
+    def clear_desk_target(self):
+        self.args.relay_desk = None
+        self._show_desk_target()
+        self.say('desk target cleared: e / r use the desk spots (--relay-spots-bot) again')
+
+    def _show_desk_target(self):
+        import math as _m
+        a, M = self.args, self._Marker
+        z0 = getattr(a, 'table_z', -0.007)
+        for k, typ in ((0, M.CUBE), (1, M.ARROW)):
+            m = M()
+            m.header.frame_id, m.ns, m.id = 'base', 'tray_desk_target', k
+            if not a.relay_desk:
+                m.action = M.DELETE
+                self._target_pub.publish(m)
+                continue
+            x, y, yd = a.relay_desk
+            m.type, m.action = typ, M.ADD
+            m.pose.position.x, m.pose.position.y = float(x), float(y)
+            m.pose.orientation.z, m.pose.orientation.w = _m.sin(_m.radians(yd) / 2), \
+                _m.cos(_m.radians(yd) / 2)
+            Wf, Lh, H = a.relay_tray            # finger direction, handle (L -> R), height
+            if typ == M.CUBE:
+                m.pose.position.z = z0 + H / 2
+                m.scale.x, m.scale.y, m.scale.z = float(Lh), float(Wf), float(H)
+                m.color.r, m.color.g, m.color.b, m.color.a = 0.2, 0.9, 0.3, 0.45
+            else:
+                m.pose.position.z = z0 + H + 0.01
+                m.pose.position.x -= 0.5 * Lh * _m.cos(_m.radians(yd))
+                m.pose.position.y -= 0.5 * Lh * _m.sin(_m.radians(yd))
+                m.scale.x, m.scale.y, m.scale.z = float(Lh), 0.012, 0.012
+                m.color.r, m.color.g, m.color.b, m.color.a = 0.1, 0.6, 0.1, 1.0
+            self._target_pub.publish(m)
+
     def _bot_spots(self):
         """e / r: --relay-spots-bot as the desk spots, unless --relay-spots / --relay-desk is
         given. -> the --relay-spots value to restore."""
@@ -447,6 +529,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             raise Stop('holding the tray: put it down first')
         keep = a.table_z
         q_start = self.node.q()
+        self._desk_pick = True             # the tray may lie on the desk cables (_desk_on)
         spots_keep = self._bot_spots()
         try:
             self.relay_setup()
@@ -481,6 +564,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             self._remove_world('relay_tray')
         finally:
             a.table_z = keep
+            self._desk_pick = False
             a.relay_spots = spots_keep
             self.track_mode = ''
 

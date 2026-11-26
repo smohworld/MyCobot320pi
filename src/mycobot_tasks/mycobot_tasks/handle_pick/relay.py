@@ -36,7 +36,8 @@ TOUCH = ['gripper_connection', 'gripper_base', 'gripper_left1', 'gripper_left2',
          'gripper_right1', 'gripper_right2', 'gripper_right3', 'gripper_tcp']
 TRAY_ID = 'relay_tray'
 # what the tray stands on (place_scene names): its contacts with these are normal there
-D11_ON, DESK_ON, BOX_ON = ('shelf_fork',), ('desk',), ('bot_box',)
+D11_ON, DESK_ON, BOX_ON = ('shelf_fork',), ('desk',), ('bot_box',)   # NOT desk_cables: a tray put on the
+# lying cables slid 4 cm / turned 26 deg on release (real r 11-26 16:15)
 TMP_ID = 'relay_tray_plan'
 BASE_PAD_ID = 'relay_tray_basepad'   # the held tray grown by --relay-base-pad (_contacts)
 BASE_PARTS = {'base', 'link1', 'robot_mount'}   # only these count against BASE_PAD_ID
@@ -129,6 +130,11 @@ class RelayMixin:
         return subprocess.run(['xacro', x], capture_output=True, text=True, check=True).stdout
 
     # ------------------------------------------------------------------ geometry
+    def _desk_tip(self):
+        """Finger tip z with the tray on the desk: the tray bottom --place-drop over the desk
+        top (released there; the same height grasps it, 1 mm less deep: 11-26)."""
+        return self._desk_geo[3] + self._tip_to_bottom() + self.args.place_drop
+
     def _tip_to_bottom(self):
         a = self.args
         return a.tray_height - a.grasp_depth          # finger tips over the tray bottom
@@ -188,6 +194,12 @@ class RelayMixin:
         o = CollisionObject()
         o.id, o.header.frame_id, o.operation = oid, 'base', CollisionObject.REMOVE
         self._scene(world=[o])
+
+    def _desk_on(self):
+        """What the held tray may touch at the desk top: the desk; while picking a tray that
+        already stands on the desk (e, self._desk_pick) also the cables lying there (it may
+        lie on them). Putting a tray down (r, n, j): not on the cables (11-26: slid 4 cm)."""
+        return DESK_ON + (('desk_cables',) if getattr(self, '_desk_pick', False) else ())
 
     def relay_clear(self):
         """No relay tray left in the scene (world copy; the attached one only if ours)."""
@@ -673,7 +685,7 @@ class RelayMixin:
         h = np.asarray(d11['h'], float)
         surf = h[2] - a.tray_height
         pg, pa = h - [0, 0, a.grasp_depth], h + [0, 0, a.approach_above]
-        desk_tip = self._desk_geo[3] + self._tip_to_bottom()
+        desk_tip = self._desk_tip()
         zc = a.relay_carry_z
         why = []
         rad = h[:2] / max(1e-6, np.linalg.norm(h[:2]))
@@ -730,7 +742,7 @@ class RelayMixin:
                                     q = (path or tq)[-1]
                                     st = self._straighten(q, ps_, yc, f'spot {s}')
                                     down = self._chain(st[-1], seg(ps_, pd, 0.003), yc,
-                                                       surfaces=[(self._desk_geo[3], DESK_ON)],
+                                                       surfaces=[(self._desk_geo[3], self._desk_on())],
                                                        label=f'spot {s}: down')
                                     upe = self._chain(down[-1], seg(pd, ps_), yc, held=False,
                                                       label=f'spot {s}: empty up')
@@ -763,12 +775,61 @@ class RelayMixin:
                                     for t in spots if t not in reached]
         raise RelayFail('D11 <-> desk: no way\n    ' + '\n    '.join(why[-12:]))
 
+    def _desk_lift(self, qn, pd, s, yg, tag, why):
+        """The tray at the desk spot s (tips at pd, grasp joints qn) up to the carry height:
+        straight up; a far tray (straight up -> no IK / wrist branch jump near the reach
+        limit) instead lifted only --relay-low-lift, pulled --relay-low-pull toward the base
+        at that height, then up (user 11-26: trays at ~28-30 cm). The empty hand: straight up
+        over the tray, as high as it goes (the arm switch ends there).
+        -> (lift joints, empty-hand-up joints, carry point over the end) or RelayFail."""
+        a = self.args
+        zc = a.relay_carry_z
+        surf = [(self._desk_geo[3], self._desk_on())]
+        top = np.array([s[0], s[1], zc])
+        try:
+            lift = self._chain(qn, seg(pd, top), yg, surfaces=surf, label=f'{tag}: lift')
+            upe = self._chain(qn, seg(pd, top), yg, held=False, label=f'{tag}: empty')
+            return lift, upe, top
+        except RelayFail as e:
+            first = e
+        r = float(np.hypot(s[0], s[1]))
+        u = np.array([s[0], s[1], 0.0]) / max(r, 1e-9)
+        low = pd + [0.0, 0.0, a.relay_low_lift]
+        for pull in a.relay_low_pull:
+            if pull <= 0 or r - pull < 0.15:
+                continue
+            p2l = low - u * pull
+            p2 = np.array([p2l[0], p2l[1], zc])
+            try:
+                l1 = self._chain(qn, seg(pd, low), yg, surfaces=surf, label=f'{tag}: low lift')
+                l2 = self._chain(l1[-1], seg(low, p2l), yg, surfaces=surf,
+                                 label=f'{tag}: pull {pull * 100:.0f} cm in')
+                l3 = self._chain(l2[-1], seg(p2l, p2), yg, surfaces=surf, label=f'{tag}: up')
+            except RelayFail as e:
+                why.append(str(e))
+                continue
+            upe = None
+            for hu in (zc - pd[2], 0.08, a.approach_above + 0.02):
+                try:
+                    upe = self._chain(qn, seg(pd, pd + [0.0, 0.0, hu]), yg, held=False,
+                                      label=f'{tag}: empty up {hu * 100:.0f} cm')
+                    break
+                except RelayFail as e:
+                    why.append(str(e))
+            if upe is None:
+                continue
+            print(f'  relay {tag}: far desk tray ({r * 1000:.0f} mm): lifted '
+                  f'{a.relay_low_lift * 100:.0f} cm, pulled {pull * 100:.0f} cm in, then up',
+                  flush=True)
+            return l1 + l2 + l3, upe, p2
+        raise first
+
     def plan_leg_b(self, A, bot, q_from):
         """Desk spot -> TurtleBot box. bot = dict(h=handle top xyz in the box, lr=L -> R).
         q_from: empty arm now (over the desk tray). -> dict(steps)."""
         a = self.args
         s, yc = A['spot'], A['yc']
-        desk_tip = self._desk_geo[3] + self._tip_to_bottom()
+        desk_tip = self._desk_tip()
         zc = a.relay_carry_z
         ps_, pd = np.array([s[0], s[1], zc]), np.array([s[0], s[1], desk_tip])
         h = np.asarray(bot['h'], float)
@@ -789,9 +850,7 @@ class RelayMixin:
                     why.append(f'{tag}: no normal grasp at the desk spot')
                     continue
                 try:
-                    lift = self._chain(qn, seg(pd, ps_), yg, surfaces=[(self._desk_geo[3], DESK_ON)],
-                                       label=f'{tag}: lift')
-                    upe = self._chain(qn, seg(pd, ps_), yg, held=False, label=f'{tag}: empty')
+                    lift, upe, ps_ = self._desk_lift(qn, pd, s, yg, tag, why)
                 except RelayFail as e:
                     why.append(str(e))
                     continue
@@ -1510,7 +1569,7 @@ class RelayMixin:
         self.relay_clear()
         a = self.args
         self._rl_surfaces = [(float(d11['h'][2]) - a.tray_height, D11_ON),
-                             (self._desk_geo[3], DESK_ON)]
+                             (self._desk_geo[3], self._desk_on())]
         key = ('A',) + self._relay_key(d11)
         cached = getattr(self, '_rl_cache_a', None)
         if cached is not None and cached[0] == key:
@@ -1545,15 +1604,14 @@ class RelayMixin:
         box). -> None or why not."""
         a = self.args
         s, yc = A['spot'], A['yc']
-        pd = np.array([s[0], s[1], self._desk_geo[3] + self._tip_to_bottom()])
+        pd = np.array([s[0], s[1], self._desk_tip()])
         ps_ = np.array([s[0], s[1], a.relay_carry_z])
         yg = math.remainder(yc + math.pi, 2 * math.pi)
         qn = self._ik_any(pd, yg, False)
         if qn is None:
             return 'no normal-arm grasp there (fingers turned 180)'
         try:
-            self._chain(qn, seg(pd, ps_), yg, surfaces=[(self._desk_geo[3], DESK_ON)],
-                        label='regrasp 180: lift')
+            self._desk_lift(qn, pd, s, yg, 'regrasp 180', [])
         except RelayFail as e:
             return str(e)
         return None
@@ -1582,7 +1640,7 @@ class RelayMixin:
         """A tray standing on the desk (d = dict(h=handle top xyz, lr=L -> R)) as leg A
         leaves it -> the A dict plan_leg_b needs (spot, yc, q_rel), or None (no normal-arm
         grasp there)."""
-        pd = np.array([d['h'][0], d['h'][1], self._desk_geo[3] + self._tip_to_bottom()])
+        pd = np.array([d['h'][0], d['h'][1], self._desk_tip()])
         for yc in self._yaws(d['lr']):
             q = self._ik_any(pd, yc, False)
             if q is not None:
@@ -1620,7 +1678,7 @@ class RelayMixin:
         poses of relay_desk_cands tried (at most --relay-max-spots). q_from: the arm now.
         -> (A, B) or Stop (nothing moved)."""
         a = self.args
-        self._rl_surfaces = [(self._desk_geo[3], DESK_ON)]
+        self._rl_surfaces = [(self._desk_geo[3], self._desk_on())]
         cands = [desk] if desk is not None else self.relay_desk_cands()[:a.relay_max_spots]
         if not cands:
             raise Stop('no desk spot candidate (--relay-desk / --relay-spot-r)')
@@ -1663,7 +1721,7 @@ class RelayMixin:
                tuple(a.relay_tray), a.relay_tilt, a.relay_carry_z, tuple(a.relay_spots or ()),
                tuple(a.relay_spot_r), tuple(a.relay_plan_pads))
         self._rl_surfaces = [(float(d11['h'][2]) - a.tray_height, D11_ON),
-                             (self._desk_geo[3], DESK_ON),
+                             (self._desk_geo[3], self._desk_on()),
                              (float(bot['h'][2]) - a.tray_height, BOX_ON)]
         cached = getattr(self, '_rl_cache', None)
         if cached is not None and cached[0] == key:
