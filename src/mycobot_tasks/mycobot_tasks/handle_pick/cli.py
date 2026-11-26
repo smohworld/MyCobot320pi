@@ -368,6 +368,9 @@ def main():
     G = grp['relay_speed'].add_argument
     G('--relay-speed', type=float,
       help='n / j / e / r: fastest joint speed of the relay paths, empty arm [rad/s]')
+    G('--desk-target-r', type=lambda t: [float(v) for v in t.split(',')],
+      help='RViz desk target (2D Goal Pose): accepted only with the handle this far from the '
+           'base, min,max [m] (drawn as green arcs on the desk)')
     G('--relay-low-lift', type=float,
       help='e / r: a far desk tray (straight up not possible) is lifted only this high first '
            '[m]')

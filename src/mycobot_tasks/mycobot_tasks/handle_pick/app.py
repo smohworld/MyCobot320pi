@@ -362,8 +362,39 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._target_pub = self.node.create_publisher(Marker, 'tray_desk_target', qos)
         self.node.create_subscription(PoseStamped, 'goal_pose', self._on_goal_pose, 10)
+        self._show_desk_band()
         if self.args.relay_desk:
             self._show_desk_target()
+
+    def _show_desk_band(self):
+        """The reachable band for the desk target (--desk-target-r) drawn on the desk: two
+        green arcs (inner / outer handle radius), only where they lie on the desk."""
+        import math as _m
+        from geometry_msgs.msg import Point
+        a, M = self.args, self._Marker
+        z0 = getattr(a, 'table_z', -0.007) + 0.016
+        try:
+            c, sz, dy, _ = self._desk()
+        except Exception:  # noqa: BLE001
+            return
+        R = np.array([[_m.cos(-dy), -_m.sin(-dy)], [_m.sin(-dy), _m.cos(-dy)]])
+        for k, rr in enumerate(a.desk_target_r):
+            m = M()
+            m.header.frame_id, m.ns, m.id = 'base', 'tray_desk_band', k
+            m.type, m.action = M.LINE_LIST, M.ADD
+            m.scale.x = 0.004
+            m.color.r, m.color.g, m.color.b, m.color.a = 0.1, 0.85, 0.2, 0.9
+            m.pose.orientation.w = 1.0
+            prev = None
+            for t in np.radians(np.arange(0, 361, 3)):
+                p = np.array([rr * _m.cos(t), rr * _m.sin(t)])
+                d = R @ (p - c)
+                on = abs(d[0]) < sz[0] / 2 and abs(d[1]) < sz[1] / 2
+                if on and prev is not None:
+                    m.points += [Point(x=float(prev[0]), y=float(prev[1]), z=z0),
+                                 Point(x=float(p[0]), y=float(p[1]), z=z0)]
+                prev = p if on else None
+            self._target_pub.publish(m)
 
     def _on_goal_pose(self, msg):
         import math as _m
@@ -382,6 +413,12 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             yaw = _m.atan2(d[1], d[0])
         x, y, yd = float(xyz[0]), float(xyz[1]), _m.degrees(yaw)
         r = _m.hypot(x, y)
+        r0, r1 = a.desk_target_r
+        if not r0 <= r <= r1:
+            self.say(f'desk target ({x * 1000:.0f}, {y * 1000:.0f}) mm is {r * 1000:.0f} mm from the '
+                     f'base: outside the reachable band {r0 * 1000:.0f}..{r1 * 1000:.0f} mm (green '
+                     'lines in RViz), ignored')
+            return
         try:
             ok = self.on_desk((x, y), yaw + _m.radians(a.grip_yaw_offset))
         except Exception:  # noqa: BLE001  (desk geometry not ready: checked at planning)
@@ -393,8 +430,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
         a.relay_desk = [x, y, yd]
         self.say(f'desk target set from RViz: tray handle ({x * 1000:.0f}, {y * 1000:.0f}) mm, '
                  f'L->R {yd:.0f} deg, {r * 1000:.0f} mm from the base (r puts it here, e looks '
-                 'here; c = clear)' + ('' if 0.19 <= r <= 0.28 else
-                                       '  WARNING: outside ~190..280 mm, may not be planned'))
+                 'here; c = clear)' + ('  (far: lifted low and pulled in first)' if r > 0.27 else ''))
         self._show_desk_target()
 
     def clear_desk_target(self):
@@ -406,7 +442,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
         import math as _m
         a, M = self.args, self._Marker
         z0 = getattr(a, 'table_z', -0.007)
-        for k, typ in ((0, M.CUBE), (1, M.ARROW)):
+        for k, typ in ((0, M.CUBE), (1, M.ARROW), (2, M.TEXT_VIEW_FACING)):
             m = M()
             m.header.frame_id, m.ns, m.id = 'base', 'tray_desk_target', k
             if not a.relay_desk:
@@ -423,6 +459,12 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
                 m.pose.position.z = z0 + H / 2
                 m.scale.x, m.scale.y, m.scale.z = float(Lh), float(Wf), float(H)
                 m.color.r, m.color.g, m.color.b, m.color.a = 0.2, 0.9, 0.3, 0.45
+            elif typ == M.TEXT_VIEW_FACING:
+                m.pose.position.z = z0 + H + 0.05
+                m.scale.z = 0.022
+                m.color.r, m.color.g, m.color.b, m.color.a = 0.1, 0.8, 0.2, 1.0
+                m.text = (f'tray target ({x * 1000:.0f}, {y * 1000:.0f}) mm, L->R {yd:.0f} deg, '
+                          f'r {_m.hypot(x, y) * 1000:.0f} mm')
             else:
                 m.pose.position.z = z0 + H + 0.01
                 m.pose.position.x -= 0.5 * Lh * _m.cos(_m.radians(yd))
