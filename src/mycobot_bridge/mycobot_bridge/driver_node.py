@@ -90,6 +90,9 @@ class TrajJob:
         self.off_t = 0.0
         self.label = ('', '', '')     # (mode, held, label) from the track_label topic
         self.ff_path = False          # ff_along_path when accepted (see _path_bias)
+        self.cfg = (0.0, 0.0, 0)      # (loop_rate, lookahead, stream_speed) at the start
+        self.n_tick = 0               # hw loop ticks while streaming (-> achieved loop rate)
+        self.n_send = 0               # send_angles while streaming
 
     @property
     def duration(self):
@@ -397,6 +400,20 @@ class MyCobotDriver(Node):
                 self.fast_still = float(prm.value)
             elif prm.name == 'ff_along_path':
                 self.ff_along_path = bool(prm.value)
+            # trajectory streaming, settable at run time (next trajectory; A/B tests with
+            # track_log.csv columns loop_hz / lookahead / stream_speed / tick_hz / send_hz)
+            elif prm.name == 'loop_rate':
+                if not 5.0 <= float(prm.value) <= 60.0:
+                    return SetParametersResult(successful=False, reason='loop_rate 5..60 Hz')
+                self.loop_rate = float(prm.value)
+            elif prm.name == 'lookahead':
+                if not 0.0 <= float(prm.value) <= 0.5:
+                    return SetParametersResult(successful=False, reason='lookahead 0..0.5 s')
+                self.lookahead = float(prm.value)
+            elif prm.name == 'stream_speed':
+                if not 1 <= int(prm.value) <= 100:
+                    return SetParametersResult(successful=False, reason='stream_speed 1..100')
+                self.stream_speed = int(prm.value)
         return SetParametersResult(successful=True)
 
     def _stop_all(self):
@@ -409,7 +426,6 @@ class MyCobotDriver(Node):
 
     # -------------------------------------------------------------- hw thread
     def _hw_loop(self):
-        period = 1.0 / self.loop_rate
         tick = 0
         log_t = 0.0
         while self._running and rclpy.ok():
@@ -427,7 +443,7 @@ class MyCobotDriver(Node):
                 if self._fail_count >= self.reconnect_after and self.connection != 'fake':
                     self._reconnect()
             tick += 1
-            rest = period - (time.monotonic() - t_loop)
+            rest = 1.0 / self.loop_rate - (time.monotonic() - t_loop)   # settable at run time
             if rest > 0:
                 time.sleep(rest)
 
@@ -519,12 +535,14 @@ class MyCobotDriver(Node):
         job.desired = job.sample(t)
 
         if t < job.duration:
+            job.n_tick += 1
             ref = job.sample(t + self.lookahead)
             bias = self._path_bias(job, t, ref) if job.ff_path else job.bias
             target = self._clip_cmd(ref + bias, ref)
             if job.last_sent is None or np.max(np.abs(target - job.last_sent)) >= self.min_step_deg:
                 self._send_angles(target)
                 job.last_sent = target
+                job.n_send += 1
             return
 
         final = job.positions[-1]
@@ -647,7 +665,8 @@ class MyCobotDriver(Node):
                      'off_norm', 'off_t_s']
                     + [f'{k}{j}' for k in ('max', 'rms', 'off', 'vmax', 'start', 'final')
                        for j in range(1, 7)]
-                    + ['mode', 'held', 'label', 'ff_path'])
+                    + ['mode', 'held', 'label', 'ff_path',
+                       'loop_hz', 'lookahead', 'stream_speed', 'tick_hz', 'send_hz'])
             if os.path.exists(self.track_log):          # older columns: kept aside
                 with open(self.track_log) as f:
                     first = next(csv.reader(f), [])
@@ -667,7 +686,10 @@ class MyCobotDriver(Node):
                            + [f'{v:.3f}' for v in np.concatenate([
                                job.trk_max, np.sqrt(job.trk_sq / job.trk_n), job.off_max, vmax,
                                job.positions[0], job.positions[-1]])]
-                           + list(job.label) + [int(job.ff_path)])
+                           + list(job.label) + [int(job.ff_path)]
+                           + [f'{job.cfg[0]:.0f}', f'{job.cfg[1]:.3f}', job.cfg[2],
+                              f'{job.n_tick / max(job.duration, 1e-3):.1f}',
+                              f'{job.n_send / max(job.duration, 1e-3):.1f}'])
         except OSError as e:
             self.get_logger().warn(f'track_log_csv write failed: {e}')
 
@@ -891,6 +913,7 @@ class MyCobotDriver(Node):
                     + self.ff_dir * np.where(np.abs(move) >= self.ff_min_move,
                                              np.sign(move), 0.0))
         job.ff_path = self.ff_along_path
+        job.cfg = (float(self.loop_rate), float(self.lookahead), int(self.stream_speed))
         job.ff_static = self.ff_bias + self.ff_gain @ pos[-1]
         job.dir_sign = np.where(np.abs(move) >= self.ff_min_move, np.sign(move), 0.0)
         return job, ''
