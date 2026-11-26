@@ -103,7 +103,7 @@ def main():
       help='n / j, SIMULATION: D11 tray / TurtleBot / tray in the box as arranged in RViz '
            '(ros2 run mycobot_tasks layout files, read at every n / j), no camera')
     G('--relay-desk', type=lambda t: [float(v) for v in t.split(',')], default=None,
-      help='e / r (desk <-> TurtleBot): x,y,yaw: the tray on the desk, handle midpoint [m] '
+      help='e / r (desk <-> TurtleBot): x,y,yaw: --relay-deskthe tray on the desk, handle midpoint [m] '
            'and L -> R [deg], base frame. r: where it is put (default: the planner picks a '
            'desk spot); e with --layout-poses (simulation, no camera): where it stands '
            '(default: a desk spot the planner picks); e on the real robot: measured')
@@ -114,6 +114,12 @@ def main():
            'tray must lie fully on the desk), e.g. -0.22,0 behind the arm base; default '
            '(auto): a desk grid at --relay-spot-r. e looks for the tray only there (camera '
            'over each spot; auto: the first one), r puts it there')
+    G('--relay-spots-bot', type=lambda t: None if t.strip().lower() == 'auto' else
+      [tuple(float(v) for v in p.split(',')) for p in t.split(';') if p.strip()],
+      help='e / r only (desk <-> TurtleBot): desk spot(s) "x,y;x,y;..." base [m], tried in '
+           'turn, unless --relay-spots / --relay-desk is given; auto = like n / j '
+           '(--relay-spot-r). Default: right of the arm base, so the held tray does not '
+           'pass behind it (11-26: the tray hit the base back on the way to (-0.20,-0.08))')
     G('--sim-speed', type=float, default=1.0,
       help='SIMULATION only (fake driver): motions this many times faster (relay paths '
            'and MoveIt moves; e.g. 3 = 3x, 0.5 = half speed). The real robot ignores it')
@@ -202,6 +208,13 @@ def main():
     G = grp['turtlebot'].add_argument
     G('--bot-id', type=int, help='TurtleBot ArUco ID (DICT_4X4_50)')
     G('--bot-marker-size', type=float, help='TurtleBot marker side [m]')
+    G('--bot-heading-id', type=int,
+      help='Burger heading marker ID (DICT_4X4_50, on the back of the LiDAR): r / j take '
+           'the Burger direction from it every time (tray L->R alone is +-180); -1 = off '
+           '(Burger assumed facing base +x)')
+    G('--bot-heading-size', type=float, help='Burger heading marker side (black square) [m]')
+    G('--heading-keep-s', type=float,
+      help='heading marker not in a view: the one seen up to this long ago is used [s]')
     G('--bot-marker-dz', type=float,
       help='TurtleBot marker plane this far ABOVE the surface the tray goes on [m] '
            '(0 = marker lies on that surface, e.g. on the box floor)')
@@ -331,6 +344,9 @@ def main():
       help='n / j / e / r: plan with the held tray grown by this on every side [m] (clearance '
            'from the arm base / shelf), several = tried in turn until one works (most first; '
            'default 0.005,0.003,0: 0 mm used = WARNING)')
+    G('--relay-base-pad', type=float,
+      help='n / j / e / r: the held tray keeps at least this from the arm base, link1 and the '
+           'robot_mount plates (on top of --relay-plan-pad, fixed: not relaxed) [m] (0 = off)')
     G('--relay-pad', type=float,
       help='n / j: after planning, every path is checked densely again, once as planned '
            '(contact = refused) and once with the tray grown by this on every side: the '
@@ -369,6 +385,12 @@ def main():
     G('--relay-end', choices=['home', 'stay'],
       help='n / j / e / r: after the hand-over back to the home pose (--relay-home), then '
            'the gripper closed; stay = the arm stays where it ended')
+    G('--relay-place-check', type=lambda t: t.strip().lower() in ('1', 'true', 'yes', 'on'),
+      help='e / r / n (real robot): after putting the tray down, the camera measures it again '
+           'and the error vs the plan is logged (--relay-check-log); true / false')
+    G('--relay-check-warn', type=lambda t: [float(v) for v in t.split(',')],
+      help='place check: WARNING above this position [m], yaw [deg] error')
+    G('--relay-check-log', help="place check: CSV file, one row per check ('' = off)")
     G('--relay-home', type=lambda t: [float(v) for v in t.split(',')],
       help='n / j / e / r: the home pose they end in (and go to after an error before '
            'carrying), J1..J6 [deg]; empty = the arm pose when the program started (not '
@@ -396,19 +418,35 @@ def main():
         t = sys.argv[1 + i]
         nxt = sys.argv[2 + i] if i + 2 < len(sys.argv) else None
         if t in ('--bot-place-offset', '--bot-box-offset', '--relay-spots', '--relay-desk',
+                 '--relay-spots-bot',
                  '--relay-grid', '--relay-home') and nxt and nxt[:1] == '-':
             argv.append(f'{t}={nxt}')
             i += 2
         else:
             argv.append(t)
             i += 1
-    args, _ = a.parse_known_args(argv)
+    if '--ros-args' in argv:              # ROS arguments (ros2 run / launch) are not ours
+        argv = argv[:argv.index('--ros-args')]
+    args, unknown = a.parse_known_args(argv)
+    if unknown:                           # a typo must not run with the default silently
+        import difflib
+        opts = [o for act in a._actions for o in act.option_strings]
+        hints = []
+        for u in unknown:
+            m = difflib.get_close_matches(u.split('=')[0], opts, n=1)
+            hints.append(f'{u}' + (f' (did you mean {m[0]}?)' if m else ''))
+        a.error('unknown option(s): ' + ', '.join(hints))
     args.tray = 0                   # the tray last measured (set by every detection)
     for o in ('relay_tray', 'bot_place_offset', 'bot_box_offset', 'bot_r_range', 'relay_grid',
               'relay_spot_r', 'relay_plan_pad', 'relay_grid_budget', 'relay_place_shift',
               'relay_home'):
         if isinstance(getattr(args, o), (int, float)):     # one number in the YAML
             setattr(args, o, [getattr(args, o)])
+    sb = args.relay_spots_bot                        # YAML: a list of [x, y] or a string
+    if isinstance(sb, str):
+        sb = None if sb.strip().lower() == 'auto' else \
+            [tuple(float(v) for v in q.split(',')) for q in sb.split(';') if q.strip()]
+    args.relay_spots_bot = [tuple(map(float, q)) for q in sb] if sb else None
     args.regions = os.path.expanduser(args.regions)
     args.relay_plan_pads = sorted(set(args.relay_plan_pad), reverse=True)
     args.relay_plan_pad = args.relay_plan_pads[0]      # the one planned with right now

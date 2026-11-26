@@ -56,6 +56,9 @@ search:
 turtlebot:
   bot_id: 0                          # TurtleBot ArUco ID (DICT_4X4_50)
   bot_marker_size: 0.07              # TurtleBot 마커 한 변 [m]
+  bot_heading_id: 28                 # 라이다 뒤 방향 마커 ID (-1 = 끔: 버거는 base +x를 본다고 가정)
+  bot_heading_size: 0.0225           # 방향 마커 한 변 [m] (타일 30 mm, 검은 사각 22.5 mm)
+  heading_keep_s: 60.0               # 이번 자세에서 안 보이면 이 시간 안에 본 방향 마커 위치를 씀 [s]
   bot_marker_dz: 0.0                 # 마커 면이 트레이 놓는 면보다 이만큼 위 [m] (0 = 박스 바닥)
   bot_place_offset: [0.0, 0.0, 0.0]  # 놓는 점 = 마커 중심 + dx,dy,dz [m]
   bot_offset_frame: marker           # bot_place_offset 좌표계: marker / base
@@ -104,12 +107,13 @@ moveit:
 relay_plan:
   relay_tilt: 10.0                    # 운반 중 트레이 기울기 허용 [deg] (잡기 / 놓기는 수평)
   relay_tilt_weight: 0.05             # 기울기 안에서 수평 쪽으로 당기는 정도 (0 = 한계까지 아무 기울기)
-  relay_carry_z: 0.125                # 격자 위 운반 손끝 높이 (base z) [m]
+  relay_carry_z: 0.125                # 격자 위 운반 손끝 높이 (base z) [m] (11-26: 0.17 시험 -> 버거가 멀면 해 없음, 되돌림)
   relay_pull_r: 0.16                  # 선반에서 빼낸 트레이를 base 쪽으로 이 반지름까지 당김 [m]
   relay_grid: [-0.3, 0.3, -0.3, 0.3]  # 운반 격자 xmin, xmax, ymin, ymax [m] (2 cm 간격)
   relay_min_r: 0.12                   # base 축에서 이보다 가까운 격자점은 제외 [m]
   relay_grid_budget: [100]            # 책상 -> TurtleBot 빠른 시도: 격자 탐색 점 수 한도, 값마다 한 번 [점]
-  relay_spot_r: [0.2, 0.23]           # 자동 책상 자리: base 축에서 반지름 범위 rmin, rmax [m]
+  relay_spot_r: [0.2, 0.23]           # 자동 책상 자리: base 축에서 반지름 범위 rmin, rmax [m] (11-26: 0.24-0.27 시험, 효과 없고 계획 느림 -> 되돌림)
+  relay_spots_bot: [[-0.12, -0.22], [-0.10, -0.25], [-0.08, -0.22]]  # e / r 책상 자리 (차례로 시도) [m]: base 오른쪽 뒤, 포트 쪽(뒤)을 안 지나감 (11-26). 'auto' = n / j처럼
   relay_max_spots: 5                  # 시도할 책상 자리 수
   relay_grasp_tries: 3                # D11에서 시도할 다른 잡기 자세(IK 해) 수
   relay_plan_timeout: 120.0           # 계획 한 부분이 이보다 오래 걸리면 실패 [s] (0 = 무제한)
@@ -119,6 +123,7 @@ relay_plan:
 # ---- relay 안전 여유 (충돌 검사)
 relay_safety:
   relay_plan_pad: [0.005, 0.003, 0.0]  # 든 트레이를 사방으로 키워 계획: 큰 값부터 차례로 시도 [m] (0 쓰이면 WARNING)
+  relay_base_pad: 0.015                # 든 트레이와 base / link1 / robot_mount 사이만 이만큼 여유 [m] (실제 경로 이탈 ~1.5 deg = 5-8 mm, 11-26) (0 = 끔)
   relay_pad: 0.005                     # 계획 뒤 정밀 재검사: 이 여유보다 가까운 곳 목록 [m]
   relay_touch: 0.02                    # 트레이 바닥이 놓는/집는 면 위 이 안이면 그 면과의 접촉은 정상 [m]
   relay_desk_clear: 0.04               # 빈손 OMPL 이동은 책상 위 이만큼 이상 [m] (0 = 끔)
@@ -138,6 +143,9 @@ relay_speed:
 relay_end:
   relay_end: home  # 끝나면 home (홈 + 그리퍼 닫기) / stay (그 자리)
   relay_home: []   # 홈 자세 J1..J6 [deg] (빈 목록 = 프로그램 시작 자세)
+  relay_place_check: true                    # e / r / n: 놓은 뒤 카메라로 다시 재서 계획과의 오차 기록 (실제 로봇만)
+  relay_check_warn: [0.01, 5.0]              # 그 오차가 이보다 크면 WARNING: 위치 [m], 방향 [deg]
+  relay_check_log: '~/.ros/place_check.csv'  # 오차 기록 파일 ('' = 끔)
 
 # ---- 파일 / 토픽
 files:

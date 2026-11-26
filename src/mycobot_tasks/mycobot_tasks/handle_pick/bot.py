@@ -12,14 +12,19 @@ from mycobot_tasks.red_cube_hover import CAM, TCP, Stop, project
 
 
 class BotMixin:
-    def bot_frames(self, n):
+    def bot_frames(self, n, mid=None, size=None, timeout=None):
         """n fresh frames -> TurtleBot marker (--bot-id, --bot-marker-size) results:
-        dict(p centre xyz base, yaw of the marker +x, normal, tilt, px, off, view)."""
+        dict(p centre xyz base, yaw of the marker +x, normal, tilt, px, off, view).
+        mid / size: another marker of the same dictionary (e.g. the heading marker): the
+        pose found with --bot-marker-size is scaled to its side (tvec ~ marker size)."""
         a = self.args
+        mid = a.bot_id if mid is None else mid
+        k = 1.0 if size is None else size / a.bot_marker_size
         if self._settle_now in ('once', 'fast'):
             self.wait_still()      # the last (--mid-settle) motion may end while moving
         out, after, t0, got = [], time.monotonic(), time.monotonic(), 0
-        while got < n and time.monotonic() - t0 < a.pin_timeout:
+        while got < n and time.monotonic() - t0 < (a.pin_timeout if timeout is None
+                                                   else timeout):
             img = self.node.fresh(after, timeout=1.0)
             if img is None:
                 continue
@@ -29,11 +34,11 @@ class BotMixin:
             if T is None:
                 raise Stop(f'no TF base -> {CAM}')
             found = self.bot_mp.detect(img)
-            if a.bot_id not in found:
+            if mid not in found:
                 continue
-            c, rv, tv, _ = found[a.bot_id]
+            c, rv, tv, _ = found[mid]
             R = T[:3, :3] @ cv2.Rodrigues(rv)[0]
-            p = T[:3, :3] @ tv.reshape(3) + T[:3, 3]
+            p = T[:3, :3] @ (k * tv.reshape(3)) + T[:3, 3]
             nrm = R[:, 2] if R[2, 2] > 0 else -R[:, 2]
             hgt, wid = img.shape[:2]
             uv = project(p, T, self.K, self.D)
@@ -101,6 +106,20 @@ class BotMixin:
             raise Stop(f'TurtleBot marker not stable ({spread * 1000:.1f} mm spread): moving?')
         if tilt > a.max_tilt:
             raise Stop(f'TurtleBot marker tilted {tilt:.0f} deg (> --max-tilt): not flat?')
+        h = self.heading_marker() if a.go else None
+        self.bot_how = f'BOX ID{a.bot_id}'
+        if h is not None:
+            d, dist = self.heading_side(p, yaw, h)
+            self.bot_how += (f' + HEADING ID{a.bot_heading_id} OK'
+                             if d >= 0.5 and 0.05 <= dist <= 0.40
+                             else f' (HEADING ID{a.bot_heading_id} disagrees!)')
+            if d < 0.5 or not 0.05 <= dist <= 0.40:
+                self.say(f'WARNING: Burger heading marker ID {a.bot_heading_id} is not on the '
+                         f'Burger side of the box marker (dot {d:+.2f}, {dist * 1000:.0f} mm): '
+                         '--bot-side / marker places? (the box marker is used)')
+            else:
+                self.say(f'Burger heading marker ID {a.bot_heading_id}: agrees with the box '
+                         f'marker (dot {d:+.2f}, {dist * 1000:.0f} mm)')
         self.bot = self.bot_from_marker(p, yaw, tilt)
         self.log_detection('bot', res)
         self.save_bot()
@@ -145,6 +164,9 @@ class BotMixin:
         the camera, looking down) stays over that: z = the surface looked at (default the
         bot region z)."""
         a = self.args
+        if getattr(self, '_bot_search_on', False):   # nested (heading marker scan): the
+            yield a.scan_height                      # outer keep-out stays as it is
+            return
         r = self.region('bot')
         if z is None:
             z = r['z'] if r else -0.280
@@ -157,6 +179,7 @@ class BotMixin:
         view = max(need, float(r['view']) if r else 0.0)
         keep = (a.scan_height, a.search_height, a.search_min_height)
         added = False
+        self._bot_search_on = True
         try:
             a.scan_height = a.search_height = a.search_min_height = view
             T_tip = self.node.T('base', TCP)
@@ -176,27 +199,100 @@ class BotMixin:
                      f'{(top + 0.01 - floor_z) * 1000:.0f} mm over the floor')
             yield view
         finally:
+            self._bot_search_on = False
             a.scan_height, a.search_height, a.search_min_height = keep
             if added:
                 self.bot_keepout(False)
 
-    def bot_from_tray(self, pin):
-        """Tray in the TurtleBot box (marker hidden under it) -> self.bot as if the marker
-        had been seen: the inverse of the place (handle = marker + --bot-place-offset, tray
-        L -> R = marker +x + --bot-yaw-offset, box floor = handle top - --tray-height).
-        L -> R and R -> L give the same tray: of the two the marker yaw closer to the last
-        saved TurtleBot detection is used (none saved: the tray's L -> R)."""
+    def heading_marker(self, n=5, search=False):
+        """The Burger heading marker (--bot-heading-id, --bot-heading-size, on the back of
+        the LiDAR, user 11-26) -> its median xyz in base, or None. Seen from here; else the
+        one seen within --heading-keep-s (same measurement, the Burger does not move); else
+        (search, --go) the TurtleBot region scanned for it. Only its position is used, so it
+        may stand upright."""
         a = self.args
-        yaw = math.remainder(pin['yaw'] - math.radians(a.bot_yaw_offset), 2 * math.pi)
-        last = None
+        if getattr(a, 'bot_heading_id', -1) is None or a.bot_heading_id < 0:
+            return None
+        mid, size = a.bot_heading_id, a.bot_heading_size
+
+        def look(k=n):
+            res = self.bot_frames(k, mid=mid, size=size, timeout=2.0)
+            if not res:
+                return None
+            h = np.median(np.array([r['p'] for r in res]), axis=0)
+            self._heading_last = (time.monotonic(), h)
+            return h
+
+        h = look()
+        if h is not None:
+            return h
+        last = getattr(self, '_heading_last', None)
+        if last is not None and time.monotonic() - last[0] < a.heading_keep_s:
+            self.say(f'Burger heading marker ID {mid} not in this view: the one seen '
+                     f'{time.monotonic() - last[0]:.0f} s ago is used')
+            return last[1]
+        if not (search and a.go):
+            return None
+        self.say(f'Burger heading marker ID {mid} not seen: scanning the TurtleBot area for it')
         try:
-            import yaml
-            with open(os.path.expanduser(a.bot_save)) as f:
-                last = math.radians(float(yaml.safe_load(f)['yaw_deg']))
-        except (OSError, KeyError, TypeError, ValueError, ImportError):
-            pass
-        if last is not None and abs(math.remainder(yaw - last, 2 * math.pi)) > math.pi / 2:
-            yaw = math.remainder(yaw + math.pi, 2 * math.pi)
+            # Burger pose unknown (or from this marker): the TurtleBot area kept out
+            with self.bot_search():
+                self.scan_region('bot', lambda: len(self.bot_frames(2, mid=mid, size=size,
+                                                                      timeout=1.5)) > 0)
+        except Stop as e:
+            if self._abort.is_set():
+                raise
+            self.say(f'Burger heading marker ID {mid}: {str(e).splitlines()[0]}')
+            return None
+        return look()
+
+    def heading_side(self, box_xy, yaw, h):
+        """Which way the Burger is, from its heading marker h (xyz) seen beside the box at
+        box_xy with the marker +x at yaw: (dot, dist) of the box -> Burger direction of this
+        yaw (--bot-side) with box -> h (dot > 0 = this yaw; dot < 0 = turned 180)."""
+        sx, sy = self._bot_side_vec()
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        b = np.array([c * sx - s_ * sy, s_ * sx + c * sy])      # box -> Burger, base frame
+        v = np.asarray(h[:2], float) - np.asarray(box_xy[:2], float)
+        dist = float(np.linalg.norm(v))
+        return (float(b @ v) / dist if dist > 1e-6 else 0.0), dist
+
+    def _bot_side_vec(self):
+        side = '+y'
+        sa = (self.args.scene_args or '').replace('=', ' ').split()
+        if '--bot-side' in sa and sa.index('--bot-side') + 1 < len(sa):
+            side = sa[sa.index('--bot-side') + 1]
+        return {'+x': (1, 0), '-x': (-1, 0), '+y': (0, 1), '-y': (0, -1)}.get(side, (0, 1))
+
+    def bot_from_tray(self, pin):
+        """Tray in the TurtleBot box (box marker hidden under it) -> self.bot: the box at
+        the tray (handle = marker + --bot-place-offset, box floor = handle top -
+        --tray-height); the Burger direction from its heading marker (--bot-heading-id on
+        the back of the LiDAR: the Burger lies from the box toward it, --bot-side of the box
+        marker), looked for (the TurtleBot area scanned) when not in view. NOT from the tray
+        direction (user 11-26: the tray may lie turned in the box) nor the last saved
+        detection (the Burger is moved between runs). Heading marker not found -> Stop."""
+        a = self.args
+        h = self.heading_marker(search=True)
+        if h is None:
+            raise Stop(f'TurtleBot from the tray: Burger heading marker ID {a.bot_heading_id} '
+                       'not found (TurtleBot area scanned): its direction is unknown, nothing '
+                       'planned (is the marker on the LiDAR visible from above?)')
+        v = np.asarray(h[:2], float) - np.asarray(pin['p'][:2], float)
+        dist = float(np.linalg.norm(v))
+        if not 0.05 <= dist <= 0.40:
+            raise Stop(f'TurtleBot from the tray: heading marker ID {a.bot_heading_id} at '
+                       f'({h[0] * 1000:.0f}, {h[1] * 1000:.0f}) mm is {dist * 1000:.0f} mm from the '
+                       'tray (50..400 mm expected): another marker / Burger moved? nothing planned')
+        sx, sy = self._bot_side_vec()
+        yaw = math.remainder(math.atan2(v[1], v[0]) - math.atan2(sy, sx), 2 * math.pi)
+        # info only: the tray in the box vs the Burger (not used)
+        t = math.remainder(pin['yaw'] - math.radians(a.bot_yaw_offset) - yaw, math.pi)
+        self.bot_how = f'HEADING ID{a.bot_heading_id} (tray not used)'
+        self.say(f'Burger heading marker ID {a.bot_heading_id} at ({h[0] * 1000:.0f}, '
+                 f'{h[1] * 1000:.0f}) mm, {dist * 1000:.0f} mm from the tray: Burger that way '
+                 f'(box marker +x {math.degrees(yaw):.0f} deg; the tray lies {math.degrees(t):+.0f} '
+                 'deg off the box axis, not used)')
         off = list(a.bot_place_offset) + [0.0] * (3 - len(a.bot_place_offset))
         c, s_ = math.cos(yaw), math.sin(yaw)
         hxy = np.asarray(pin['p'][:2], float)
@@ -205,7 +301,7 @@ class BotMixin:
         else:
             mxy = hxy - np.array(off[:2])
         mz = float(pin['p'][2]) - a.tray_height + a.bot_marker_dz - off[2]
-        self.say('TurtleBot pose from the tray (its marker is under it):')
+        self.say('TurtleBot pose from the tray position + heading marker (box marker under the tray):')
         return self.bot_from_marker([mxy[0], mxy[1], mz], yaw, float(pin.get('tilt', 0.0)))
 
     def bot_from_marker(self, p, yaw, tilt=0.0):

@@ -38,6 +38,8 @@ TRAY_ID = 'relay_tray'
 # what the tray stands on (place_scene names): its contacts with these are normal there
 D11_ON, DESK_ON, BOX_ON = ('shelf_fork',), ('desk',), ('bot_box',)
 TMP_ID = 'relay_tray_plan'
+BASE_PAD_ID = 'relay_tray_basepad'   # the held tray grown by --relay-base-pad (_contacts)
+BASE_PARTS = {'base', 'link1', 'robot_mount'}   # only these count against BASE_PAD_ID
 # empty arm travelling into / out of D11: fingers closed (inside the held tray's envelope,
 # the way it was checked with the tray); opened over the handle only
 CLOSED = 0.0
@@ -131,7 +133,7 @@ class RelayMixin:
         a = self.args
         return a.tray_height - a.grasp_depth          # finger tips over the tray bottom
 
-    def _tray_attached(self, pad=0.0):
+    def _tray_attached(self, pad=0.0, oid=TRAY_ID):
         """The held tray as an AttachedCollisionObject on gripper_tcp (TCP z down), grown by
         pad on every side (clearance check)."""
         from geometry_msgs.msg import Pose
@@ -140,7 +142,7 @@ class RelayMixin:
         L, W, H = self.args.relay_tray
         ac = AttachedCollisionObject(link_name='gripper_tcp', touch_links=TOUCH)
         o = ac.object
-        o.id, o.header.frame_id, o.operation = TRAY_ID, 'gripper_tcp', CollisionObject.ADD
+        o.id, o.header.frame_id, o.operation = oid, 'gripper_tcp', CollisionObject.ADD
         o.primitives = [SolidPrimitive(type=SolidPrimitive.BOX,
                                        dimensions=[L + 2 * pad, W + 2 * pad, H + 2 * pad])]
         p = Pose()
@@ -391,12 +393,13 @@ class RelayMixin:
         return sorted(out, key=lambda q: float(np.sum(np.abs(q))))
 
     # ------------------------------------------------------------------ collisions
-    def _contacts(self, q, held=True, touch=(), pad=None, at_tray=None, grip=None):
+    def _contacts(self, q, held=True, touch=(), pad=None, at_tray=None, grip=None, base_pad=True):
         """Colliding pairs at q (gripper --hold-grip with the tray / --grasp-open without).
         touch: names of the scene objects the tray bottom stands on right now (putting down
         / just lifted, see _touching): tray contacts with exactly those are normal and
         ignored, with anything else not. base-desk is always reported: ignored.
-        grip: gripper opening of the empty arm (default --grasp-open)."""
+        grip: gripper opening of the empty arm (default --grasp-open). base_pad: also the
+        --relay-base-pad copy (contacts with BASE_PARTS reported as '<part>(base pad)')."""
         from moveit_msgs.msg import RobotState
         from moveit_msgs.srv import GetStateValidity
         from sensor_msgs.msg import JointState
@@ -409,7 +412,7 @@ class RelayMixin:
                                    position=[float(v) for v in q] +
                                    [float(a.hold_grip if held else
                                           (a.grasp_open if grip is None else grip))]),
-            attached_collision_objects=[self._tray_attached(pad)] if held else [], is_diff=False)
+            attached_collision_objects=self._held_objects(pad, base_pad) if held else [], is_diff=False)
         r = _wait(self._rl_sv.call_async(rq), 20.0)
         if r is None:
             raise Stop('check_state_validity: no answer')
@@ -418,6 +421,10 @@ class RelayMixin:
             pr = tuple(sorted((c.contact_body_1, c.contact_body_2)))
             if pr == ('base', 'desk'):
                 continue
+            if BASE_PAD_ID in pr:      # the base-only clearance copy: only base parts count
+                if not (set(pr) - {BASE_PAD_ID}) <= BASE_PARTS:
+                    continue
+                pr = tuple(sorted((TRAY_ID, (set(pr) - {BASE_PAD_ID}).pop() + '(base pad)')))
             if touch and TRAY_ID in pr and (set(pr) - {TRAY_ID}) <= set(touch):
                 continue
             # empty fingers at the handle of a tray standing in the world (at_tray = its
@@ -427,6 +434,15 @@ class RelayMixin:
                 continue
             out.add(pr)
         return sorted(out)
+
+    def _held_objects(self, pad, base_pad=True):
+        """The held tray (grown by pad) + its --relay-base-pad copy (when bigger than pad):
+        the copy only counts against BASE_PARTS (see _contacts)."""
+        out = [self._tray_attached(pad)]
+        bp = getattr(self.args, 'relay_base_pad', 0.0) or 0.0
+        if base_pad and bp > pad:
+            out.append(self._tray_attached(bp, BASE_PAD_ID))
+        return out
 
     def _touching(self, q, surfaces):
         """surfaces [(z, object names)]: -> the names of those with the tray bottom within
@@ -1080,8 +1096,10 @@ class RelayMixin:
                     hit = {}
                     for q in dense:
                         touch = self._touching(q, self._rl_surfaces) if held else ()
+                        # pad 0 = real contacts only; the near report also the base pad
                         for pr in self._contacts(q, held, touch, pad,
-                                                 None if held else tray_top, grip=fw):
+                                                 None if held else tray_top, grip=fw,
+                                                 base_pad=pad > 0):
                             hit[pr] = hit.get(pr, 0) + 1
                     if hit:
                         bad.append((label, len(dense), hit))
@@ -1586,11 +1604,15 @@ class RelayMixin:
             return [dict(h=np.array([x, y, z]), lr=lr)]
         out, off = [], math.radians(a.grip_yaw_offset)
         for k in (0.0, math.pi / 2):
-            for s in self.desk_spots(0.0):
+            for i, s in enumerate(self.desk_spots(0.0)):
                 th = math.atan2(s[1], s[0]) + k
                 if self.on_desk(s, th):
-                    out.append((abs(math.hypot(*s) - sum(a.relay_spot_r) / 2), len(out),
-                                dict(h=np.array([s[0], s[1], z]), lr=th - off)))
+                    # given spots (--relay-spots): in the order given (both yaws of a spot
+                    # before the next spot); auto: the radius nearest the middle of
+                    # --relay-spot-r first
+                    rank = float(i) if a.relay_spots else \
+                        abs(math.hypot(*s) - sum(a.relay_spot_r) / 2)
+                    out.append((rank, len(out), dict(h=np.array([s[0], s[1], z]), lr=th - off)))
         return [d for *_, d in sorted(out, key=lambda t: (t[0], t[1]))]
 
     def relay_plan_desk(self, bot, q_from, desk=None):

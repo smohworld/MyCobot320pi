@@ -1,5 +1,7 @@
 """HandleApp: the tray_handle_pick actions (n / j / e / r relay, d detect, s search pose)
 on top of the detection / scan / TurtleBot / relay mixins."""
+import csv
+import math
 import os
 import threading
 import time
@@ -290,6 +292,10 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
                     self._scene(world=[self._tray_world(A['q_rel'])])
             self.relay_run(B['steps'])
             self.say('tray on the TurtleBot' + ('' if a.go else ' (dry run)'))
+            self.relay_place_check('in the TurtleBot box', bot['h'], bot['lr'],
+                                   float(bot['h'][2]) - a.tray_height, B['steps'],
+                                   view=a.bot_close_view or None,
+                                   extra=f'bot r {np.hypot(*bot["h"][:2]) * 1000:.0f} mm')
             self.relay_home(CLOSED)              # closed over the box (last step)
             self._remove_world('relay_tray')
         finally:
@@ -343,6 +349,94 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
         raise Stop('no tray at the desk spot(s) (--relay-spots / --relay-desk):\n  '
                    + '\n  '.join(why))
 
+    def _bot_spots(self):
+        """e / r: --relay-spots-bot as the desk spots, unless --relay-spots / --relay-desk is
+        given. -> the --relay-spots value to restore."""
+        a = self.args
+        keep = a.relay_spots
+        if a.relay_spots is None and a.relay_desk is None and a.relay_spots_bot:
+            a.relay_spots = list(a.relay_spots_bot)
+        return keep
+
+    @staticmethod
+    def _held_travel(steps):
+        """Joint travel while the tray is held: (J1, J6) [deg] summed over the held paths."""
+        held, prev, j1, j6 = False, None, 0.0, 0.0
+        for kind, data, _ in steps:
+            if kind == 'grasp':
+                held = True
+            elif kind == 'release':
+                held = False
+            elif kind == 'traj' and data:
+                pts = ([prev] if prev is not None else []) + list(data)
+                if held and len(pts) > 1:
+                    d = np.abs(np.diff(np.degrees(np.asarray(pts, float)), axis=0))
+                    j1, j6 = j1 + float(d[:, 0].sum()), j6 + float(d[:, 5].sum())
+                prev = data[-1]
+        return j1, j6
+
+    def relay_place_check(self, where, xy, lr, surface_z, steps, view=None, extra=''):
+        """After a put-down (real robot, --relay-place-check): camera over the tray, measured
+        again, the error vs the plan (handle midpoint xy, L -> R lr mod 180) said and logged
+        (--relay-check-log) with the held joint travel. Not measured -> said, no error (the
+        tray is already put down)."""
+        a = self.args
+        if not (a.go and a.relay_place_check) or a.layout_poses or self.conn in ('fake', None):
+            return
+        keep = (a.search_x, a.search_y, a.use_last, a.table_z)
+        pin, why = None, ''
+        try:
+            a.search_x, a.search_y, a.use_last, a.table_z = xy[0], xy[1], False, surface_z
+            self.say(f'place check: camera over the tray {where}')
+            self.look_over(float(xy[0]), float(xy[1]), surface_z, f'place check ({where})',
+                           view=view)
+            pin = self.detect_pin(region='desk')     # no such region: no wide scan
+        except Stop as e:
+            if self._abort.is_set():
+                raise
+            why = str(e).splitlines()[0]
+        finally:
+            a.search_x, a.search_y, a.use_last, a.table_z = keep
+        j1, j6 = self._held_travel(steps)
+        if pin is None:
+            self.say(f'place check {where}: tray not measured ({why})')
+            return
+        m = np.asarray(pin['p'][:2], float)
+        d = m - np.asarray(xy[:2], float)
+        dist = float(np.linalg.norm(d))
+        dyaw = math.degrees(math.remainder(float(pin['yaw']) - lr, math.pi))   # -90..90
+        wp, wy = a.relay_check_warn[0], a.relay_check_warn[1]
+        bad = dist > wp or abs(dyaw) > wy
+        self.say(f'{"WARNING: " if bad else ""}place check {where}: {dist * 1000:.1f} mm '
+                 f'(dx {d[0] * 1000:+.1f}, dy {d[1] * 1000:+.1f}), yaw {dyaw:+.1f} deg off the '
+                 f'plan (held travel J1 {j1:.0f} deg, J6 {j6:.0f} deg)'
+                 + (f' > {wp * 1000:.0f} mm / {wy:.0f} deg: slipped in the fingers or pushed?'
+                    if bad else ''))
+        path = os.path.expanduser(a.relay_check_log or '')
+        if not path:
+            return
+        try:
+            new = not os.path.exists(path)
+            with open(path, 'a', newline='') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(['time', 'mode', 'where', 'plan_x_mm', 'plan_y_mm', 'plan_lr_deg',
+                                'meas_x_mm', 'meas_y_mm', 'meas_lr_deg', 'dx_mm', 'dy_mm',
+                                'dist_mm', 'dyaw_deg', 'tilt_deg', 'held_j1_deg',
+                                'held_j6_deg', 'extra'])
+                w.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), getattr(self, 'track_mode', ''),
+                            where, f'{xy[0] * 1000:.1f}', f'{xy[1] * 1000:.1f}',
+                            f'{math.degrees(lr):.1f}', f'{m[0] * 1000:.1f}', f'{m[1] * 1000:.1f}',
+                            f'{math.degrees(float(pin["yaw"])):.1f}', f'{d[0] * 1000:.1f}',
+                            f'{d[1] * 1000:.1f}', f'{dist * 1000:.1f}', f'{dyaw:.1f}',
+                            f'{float(pin.get("tilt", 0.0)):.1f}', f'{j1:.0f}', f'{j6:.0f}', extra])
+        except OSError as e:
+            self.say(f'place check: log not written ({e})')
+
+    def _desk_lr(self, A):
+        """Planned tray L -> R on the desk from leg A (tool yaw yc - --grip-yaw-offset)."""
+        return float(A['yc']) - math.radians(self.args.grip_yaw_offset)
+
     def act_desk_to_bot(self):
         """e: desk -> TurtleBot (the second part of n alone): the tray on the desk measured
         (camera, from here), the TurtleBot marker measured, desk -> TurtleBot planned (tray
@@ -353,6 +447,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             raise Stop('holding the tray: put it down first')
         keep = a.table_z
         q_start = self.node.q()
+        spots_keep = self._bot_spots()
         try:
             self.relay_setup()
             self.relay_clear()
@@ -378,10 +473,15 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             self.relay_start_tray(steps)
             self.relay_run(steps)
             self.say('tray on the TurtleBot' + ('' if a.go else ' (dry run)'))
+            self.relay_place_check('in the TurtleBot box', bot['h'], bot['lr'],
+                                   float(bot['h'][2]) - a.tray_height, steps,
+                                   view=a.bot_close_view or None,
+                                   extra=f'bot r {np.hypot(*bot["h"][:2]) * 1000:.0f} mm')
             self.relay_home(CLOSED)              # closed over the box (last step)
             self._remove_world('relay_tray')
         finally:
             a.table_z = keep
+            a.relay_spots = spots_keep
             self.track_mode = ''
 
     def act_bot_to_desk(self):
@@ -394,6 +494,7 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             raise Stop('holding the tray: put it down first')
         keep = a.table_z
         q_start = self.node.q()
+        spots_keep = self._bot_spots()
         try:
             self.relay_setup()
             self.relay_clear()
@@ -430,10 +531,13 @@ class HandleApp(DetectMixin, ScanMixin, BotMixin, RelayMixin, BaseApp):
             s = A['spot']
             self.say(f'tray on the desk at ({s[0] * 1000:.0f}, {s[1] * 1000:.0f}) mm'
                      + ('' if a.go else ' (dry run)'))
+            self.relay_place_check('on the desk', s, self._desk_lr(A), self._desk_geo[3],
+                                   steps, extra=f'from box r {np.hypot(*bot["h"][:2]) * 1000:.0f} mm')
             self.relay_home(CLOSED)
             self._remove_world('relay_tray')
         finally:
             a.table_z = keep
+            a.relay_spots = spots_keep
             self.track_mode = ''
 
     def act_bot_to_d11(self):

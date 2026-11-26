@@ -51,14 +51,17 @@ class DetectMixin:
 
     def lock_tray(self, found, img):
         """Several trays (trays.py): the first frame of a detection with an allowed tray in
-        view picks it (both markers, nearest the image centre); the rest of that detection
-        measures only this one (self.id_l / id_r, args.tray)."""
+        view with BOTH its markers picks it (nearest the image centre); the rest of that
+        detection measures only this one (self.id_l / id_r, args.tray). Looking elsewhere
+        (last position, region scan) unlocks it again."""
         a = self.args
         if self.tray_lock is not None:
             return
         t = tr.pick_tray(found, (img.shape[1], img.shape[0]))
         if t is None:
             return
+        if any(i not in found for i in tr.ids_of(t)):
+            return      # one marker alone can be a misread ID (11-26: tray 3 locked, not there)
         self.tray_lock, a.tray = t, t
         self.id_l, self.id_r = tr.ids_of(t)
         self.say(f'tray {t} (markers {self.id_l} / {self.id_r}) in view: measuring it')
@@ -132,10 +135,12 @@ class DetectMixin:
                     if last is not None:
                         self.say(f'no {self.tray_names()} here: looking at the last tray '
                                  f'position ({last[0] * 1000:.0f}, {last[1] * 1000:.0f}) mm first')
+                        self.tray_lock = None     # elsewhere: any tray again (the lock may be wrong)
                         if self.look_last(last, region):
                             continue
                 if a.track and not scanned and self.region(region) is not None:
                     scanned = True                    # the region set in RViz
+                    self.tray_lock = None             # any tray again (the lock may be wrong)
                     self.scan_region(region, self.tray_seen)
                     continue
                 if a.track and scan and attempt < a.recenter:

@@ -28,14 +28,43 @@ def view(app):
             vis = img.copy()
             try:
                 found = live.detect(img)
+                hid = getattr(args, 'bot_heading_id', -1)
+                seen = []
                 for i, (c, rv, tv, _) in found.items():
                     mine = i in (app.id_l, app.id_r)
-                    cv2.polylines(vis, [c.astype(np.int32)], True,
-                                  (0, 255, 0) if mine else
-                                  (255, 128, 0) if i == args.bot_id else (128, 128, 128), 2)
+                    col = ((0, 255, 0) if mine else (255, 128, 0) if i == args.bot_id else
+                           (255, 0, 255) if i == hid else (128, 128, 128))
+                    cv2.polylines(vis, [c.astype(np.int32)], True, col, 3 if col != (128, 128, 128) else 2)
                     if mine:
                         cv2.drawFrameAxes(vis, app.K, app.D, rv, tv, args.marker_size * 0.6, 2)
+                    if i in (args.bot_id, hid):
+                        name = 'BOX' if i == args.bot_id else 'HEADING'
+                        seen.append(f'{name} ID{i}')
+                        x0, y0 = c.reshape(-1, 2).min(axis=0).astype(int)
+                        _text(vis, f'{name} ID{i}', (int(x0), max(15, int(y0) - 6)), 0.5)
+                # TurtleBot markers seen now (live) + the last measured TurtleBot pose
+                bot = getattr(app, 'bot', None)
+                live_txt = ('TurtleBot seen: ' + ', '.join(seen)) if seen else 'TurtleBot: -'
+                _text(vis, live_txt, (10, vis.shape[0] - 84), 0.45)
+                if bot is not None:
+                    _text(vis, f"TurtleBot measured: box ({bot['place_xy'][0] * 1000:.0f}, "
+                               f"{bot['place_xy'][1] * 1000:.0f}) mm, "
+                               f"{getattr(app, 'bot_how', '')}", (10, vis.shape[0] - 60), 0.45)
                 T_bc = node.T('base', CAM)
+                if T_bc is not None and bot is not None:
+                    # the measured box (cross) and an arrow toward the Burger (--bot-side)
+                    import math
+                    sx, sy = app._bot_side_vec()
+                    c_, s_ = math.cos(bot['yaw']), math.sin(bot['yaw'])
+                    b = np.array([c_ * sx - s_ * sy, s_ * sx + c_ * sy])
+                    p0 = np.array([bot['place_xy'][0], bot['place_xy'][1], bot['place_z']])
+                    u0 = project(p0, T_bc, app.K, app.D)
+                    u1 = project(p0 + np.array([b[0], b[1], 0.0]) * 0.12, T_bc, app.K, app.D)
+                    if u0:
+                        cv2.drawMarker(vis, u0, (255, 128, 0), cv2.MARKER_SQUARE, 26, 2)
+                        if u1:
+                            cv2.arrowedLine(vis, u0, u1, (255, 128, 0), 3, tipLength=0.15)
+                            _text(vis, 'Burger', u1, 0.5)
                 if T_bc is not None:
                     r = handle_from_markers(found, app.id_l, app.id_r, T_bc, app.spacing)
                     if r is not None:

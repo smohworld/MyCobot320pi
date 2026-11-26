@@ -584,15 +584,15 @@ def make_parser():
     a.add_argument('--margin', type=float, default=0.012,
                    help='desk collision box raised / pushed out past the edge by this [m]')
     a.add_argument('--desk-height', type=float, default=0.299, help='desk top over the floor')
-    a.add_argument('--edge-y', type=float, default=-0.36,
-                   help='desk -y (robot right, drop-off) edge [m]: base 31 cm from it '
-                        '(2026-11-18)')
+    a.add_argument('--edge-y', type=float, default=-0.5062,
+                   help='desk -y (robot right, drop-off) edge [m] (= the layout, robot 9.4 cm '
+                        'from the +y edge at the desk end, user 2026-11-26; was -0.36)')
     a.add_argument('--desk-width', type=float, default=0.60, help='desk size along y [m]')
-    a.add_argument('--desk-x', type=floats, default=[-1.04, 0.06],
+    a.add_argument('--desk-x', type=floats, default=[-1.0344, 0.0656],
                    help='desk x range xmin,xmax in the desk frame [m]. Default: the robot sits '
                         'at the 60 cm end, the desk runs 1.10 m back (-x), its end edge 6 cm in '
                         'front of the base axis (measured 2026-11-16)')
-    a.add_argument('--robot-yaw', type=float, default=0.0,
+    a.add_argument('--robot-yaw', type=float, default=-0.0418,
                    help='base +x vs the desk long side, CCW seen from above [deg]')
     a.add_argument('--edge-points', type=floats, default=None,
                    help='x1,y1,x2,y2: two finger-tip points on the drop-off edge (base, m) '

@@ -67,7 +67,7 @@ FORK_Y = (0.0, 0.16)
 # r 31.3 cm, lowest fork (263 mm): top-down IK reaches ~34 cm at 2 cm over the handle,
 # ~30 cm at 8 cm -> approach from --above 0.04
 # desk / TurtleBot as set in the layout 2026-11-20 (robot 9.4 cm from the +y desk edge; the
-# shelf above is only clear of THIS desk, not of the place_scene default edge_y -0.36)
+# shelf above is only clear of THIS desk; place_scene defaults = these since 2026-11-26)
 DEFAULTS = dict(desk_x=[-1.0344, 0.0656], edge_y=-0.5062, robot_yaw=-0.0418,
                 shelf=[0.36, 0.11, 90.0], with_shelf=True, shelf_x=-0.097, fork_top=0.263,
                 fork_y=0.0, with_bot=True, bot=[0.2155, -0.0449, 180.0], tray_yaw_off=90.0,
