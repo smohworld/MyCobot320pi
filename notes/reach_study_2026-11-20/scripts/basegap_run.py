@@ -2,7 +2,7 @@
 # (base, link1, robot_mount) along every held path, after each relay dense check: per path
 # the smallest gap (1 mm steps up to 50 mm) and where. Report only; lines start "BASEGAP".
 #   ROS_DOMAIN_ID=77 python3 basegap_run.py <tray_handle_pick args>
-import math, sys
+import math, os, sys
 import numpy as np
 from moveit_msgs.msg import RobotState
 from moveit_msgs.srv import GetStateValidity
@@ -12,6 +12,8 @@ from mycobot_calibration.moveit_client import _wait
 from mycobot_tasks.handle_pick import relay as R
 
 orig_verify = R.RelayMixin.relay_verify
+# GAP_PARTS=shelf_rack (comma list): the gap to these parts instead of the arm base parts
+PARTS = set(os.environ['GAP_PARTS'].split(',')) if os.environ.get('GAP_PARTS') else R.BASE_PARTS
 
 
 def base_hit(self, q, pad):
@@ -21,7 +23,7 @@ def base_hit(self, q, pad):
                                position=[float(v) for v in q] + [float(self.args.hold_grip)]),
         attached_collision_objects=[self._tray_attached(pad, R.BASE_PAD_ID)], is_diff=False)
     r = _wait(self._rl_sv.call_async(rq), 20.0)
-    parts = {b for c in r.contacts for b in (c.contact_body_1, c.contact_body_2)} & R.BASE_PARTS
+    parts = {b for c in r.contacts for b in (c.contact_body_1, c.contact_body_2)} & PARTS
     return sorted(parts)
 
 
@@ -56,7 +58,13 @@ def verify(self, steps, title, start_tray=True):
             for u, v in zip(pts, pts[1:]):
                 m = max(1, int(math.ceil(math.degrees(float(np.max(np.abs(v - u)))))))
                 dense += [u + (v - u) * t for t in np.linspace(0, 1, m + 1)[1:]]
-            best = min(((gap(self, q), i) for i, q in enumerate(dense)), key=lambda x: x[0][0])
+            gs = [(gap(self, q), i) for i, q in enumerate(dense)]
+            if os.environ.get('GAP_PROFILE') and label.startswith(os.environ['GAP_PROFILE']):
+                for (g_, p_), i_ in gs[::3]:
+                    T_ = self._rl_arm.fk(dense[i_])
+                    print(f'GAPPROF {i_} tcp ({T_[0, 3] * 1000:.0f}, {T_[1, 3] * 1000:.0f}) '
+                          f'gap {g_ * 1000:.0f} mm', flush=True)
+            best = min(gs, key=lambda x: x[0][0])
             (g, parts), i = best
             T = self._rl_arm.fk(dense[i])
             print(f'BASEGAP {title} | {label}: min {g * 1000:.0f} mm{"+" if g >= 0.05 else ""} '

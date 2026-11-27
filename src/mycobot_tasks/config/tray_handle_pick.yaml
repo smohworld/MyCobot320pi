@@ -6,7 +6,7 @@
 # ---- 트레이 치수 / 잡는 높이 (--tray-type 프리셋이 덮어씀: tray_types)
 tray:
   tray_type: shelf                # 트레이 종류 (아래 tray_types의 이름)
-  tray_height: 0.076              # 트레이 바닥 -> 손잡이 윗면(마커 면) [m]
+  tray_height: 0.078              # 트레이 바닥 -> 손잡이 윗면(마커 면) [m] (선반 트레이 실측 78 mm, 11-27)
   tray_height_tol: 0.015          # 잰 손잡이 높이가 이만큼 넘게 다르면 경고 [m]
   relay_tray: [0.15, 0.1, 0.056]  # 충돌 계산용 트레이 몸체: 손가락 닫는 방향, 손잡이 방향, 높이 [m]
   grasp_depth: 0.024              # 잡을 때 손끝이 손잡이 윗면 아래로 들어가는 깊이 [m]
@@ -20,7 +20,7 @@ markers:
   marker_size: 0.0225     # 마커 검은 부분 한 변 [m]
   gap: 0.024              # 두 마커 타일 안쪽 모서리 사이 (손잡이 길이) [m]; 0 = 간격 검사 안 함
   tile_size: 0.03         # 흰 여백 포함 마커 타일 한 변 [m]
-  spacing: 0.0            # 마커 중심 간격 직접 지정 [m] (0 = gap + tile_size)
+  spacing: 0.0            # 마커 중심 간격 직접 지정 [m] (0 = gap + tile_size). tray_types 프리셋이 덮어씀 (선반 0.057 / 테스트 0.054)
   max_spacing_err: 0.004  # 마커 간격 오차 한계 [m]
   max_tilt: 10.0          # 마커 면 기울기 한계 [deg]
 
@@ -60,6 +60,12 @@ turtlebot:
   bot_heading_size: 0.0225           # 방향 마커 한 변 [m] (타일 30 mm, 검은 사각 22.5 mm)
   heading_dist: 0.125                # 방향 마커는 트레이 손잡이에서 상자 축으로 이만큼 (못 보면 앞/뒤 두 곳을 먼저 봄) [m]
   heading_keep_s: 60.0               # 이번 자세에서 안 보이면 이 시간 안에 본 방향 마커 위치를 씀 [s]
+  heading_in_box: [0.0075, 0.121]    # 방향 마커 위치, 상자 마커(ID0) 좌표 u (+x), v (+y = 버거 쪽) [m]. r / j는 트레이 -> 방향 마커 방향에서 이 각도(3.5 deg)를 빼서 상자 방향으로 씀 (실물 11-26/27 8쌍 중앙값; 이전엔 0 가정 -> 상자를 5 deg 더 돌려 봄)
+  heading_cal: '~/.ros/bot_heading_cal.yaml'  # 실물 e / n: 상자 마커와 방향 마커가 같이 보이면 그 위치를 여기 쌓음 ('' = 끔)
+  heading_cal_n: 10                  # 쌓인 값 중 최근 이만큼의 중앙값을 씀
+  heading_cal_min: 3                 # 이만큼 쌓이기 전에는 heading_in_box 값을 씀
+  bot_tray_turn_pad: [20.0, 0.003]  # r / j: 상자 안 트레이가 이 각도 [deg]보다 돌아가 있으면 상자 쪽 계획을 이 여유 [m]로만 하고 벽 검사도 이 값까지 허용 (11-27 시험용, 빈 목록 = 끔)
+  bot_tray_wall_min: 0.008           # r / j: 상자 안 트레이가 (돌아가 있어) 벽에 이보다 가까우면 계획 전에 멈춤 [m] (계획 여유 5 mm + 측정 3 mm) (0 = 끔)
   bot_marker_dz: 0.0                 # 마커 면이 트레이 놓는 면보다 이만큼 위 [m] (0 = 박스 바닥)
   bot_place_offset: [0.0, 0.0, 0.0]  # 놓는 점 = 마커 중심 + dx,dy,dz [m]
   bot_offset_frame: marker           # bot_place_offset 좌표계: marker / base
@@ -112,8 +118,8 @@ relay_plan:
   relay_low_lift: 0.03                # 먼 책상 트레이(곧게 못 올림): 먼저 이만큼만 들고 [m]
   relay_low_pull: [0.04, 0.08]        # 그 높이에서 베이스 쪽으로 이만큼 당긴 뒤 올림 (차례로) [m]
   relay_carry_z: 0.125                # 격자 위 운반 손끝 높이 (base z) [m] (11-26: 0.17 시험 -> 버거가 멀면 해 없음, 되돌림)
-  relay_pull_r: 0.16                  # 선반에서 빼낸 트레이를 base 쪽으로 이 반지름까지 당김 [m]
-  relay_grid: [-0.3, 0.3, -0.3, 0.3]  # 운반 격자 xmin, xmax, ymin, ymax [m] (2 cm 간격)
+  relay_pull_r: 0.20                  # 선반에서 빼낸 트레이를 base 쪽으로 이 반지름까지 당김 [m] (11-27 시뮬: 0.16은 base 여유 15 mm로 경로 없음 -> 0.20)
+  relay_grid: [-0.3, 0.3, -0.31, 0.31]  # 운반 격자 xmin, xmax, ymin, ymax [m] (2 cm 간격). y를 1 cm 밀어 y 0.13 줄이 생김: 선반 -> 책상 운반이 랙에서 16 mm (예전 0.14 줄 5 mm, 1 deg 오차에 랙 닿음) (11-27 시뮬 12자세 e/r/n/j)
   relay_min_r: 0.12                   # base 축에서 이보다 가까운 격자점은 제외 [m]
   relay_grid_budget: [100]            # 책상 -> TurtleBot 빠른 시도: 격자 탐색 점 수 한도, 값마다 한 번 [점]
   relay_spot_r: [0.2, 0.23]           # 자동 책상 자리: base 축에서 반지름 범위 rmin, rmax [m] (11-26: 0.24-0.27 시험, 효과 없고 계획 느림 -> 되돌림)
@@ -126,8 +132,12 @@ relay_plan:
 
 # ---- relay 안전 여유 (충돌 검사)
 relay_safety:
-  relay_plan_pad: [0.005, 0.003, 0.0]  # 든 트레이를 사방으로 키워 계획: 큰 값부터 차례로 시도 [m] (0 쓰이면 WARNING)
+  relay_plan_pad: [0.005, 0.003]       # 든 트레이를 사방으로 키워 계획: 큰 값부터 차례로 시도 [m] (11-27: 0 mm 뺌, 실물에서 쓰인 적 없음)
+  relay_pad_share: [0.7]               # 계획 시간(relay_plan_timeout)을 여유 값마다 나눔: 5 mm 시도가 70 %, 3 mm가 나머지 ([1.0] = 예전처럼 하나의 제한; 11-27 5 mm가 120 s를 다 써 3 mm 못 해봄)
   relay_base_pad: 0.015                # 든 트레이와 base / link1 / robot_mount 사이만 이만큼 여유 [m] (실제 경로 이탈 ~1.5 deg = 5-8 mm, 11-26) (0 = 끔)
+  relay_rack_pad: 0.0                  # 운반 격자에서만 든 트레이와 선반 랙(shelf_rack) 사이 여유 [m] (0 = 끔). 11-27 시뮬: 운반이 랙 패널 끝을 5 mm로 지나 1 deg 오차에 닿음; 그러나 당긴 점 회전이 9 mm라 6 mm 넘게는 계획 불가 (8/10/15 mm, pull_r 0.18/0.19 모두 실패) -> 경로 변경 필요
+  relay_rack_cost: [0.01, 0.02]        # 운반 격자(선반 -> 책상)에서 든 트레이가 랙에 이 거리들보다 가까우면 비용을 더함 [m] (막지 않음, 먼 길이 있으면 그쪽) (빈 목록 = 끔) (11-27 시뮬: 격자 밈과 함께 1 deg 오차에도 랙 안 닿음)
+  relay_rack_cost_w: 3.0               # 그 비용 가중치: 거리 k개보다 가까운 격자 한 칸 = 길이 x (1 + k x 이 값)
   relay_pad: 0.005                     # 계획 뒤 정밀 재검사: 이 여유보다 가까운 곳 목록 [m]
   relay_touch: 0.02                    # 트레이 바닥이 놓는/집는 면 위 이 안이면 그 면과의 접촉은 정상 [m]
   relay_desk_clear: 0.04               # 빈손 OMPL 이동은 책상 위 이만큼 이상 [m] (0 = 끔)
@@ -147,9 +157,18 @@ relay_speed:
 relay_end:
   relay_end: home  # 끝나면 home (홈 + 그리퍼 닫기) / stay (그 자리)
   relay_home: []   # 홈 자세 J1..J6 [deg] (빈 목록 = 프로그램 시작 자세)
-  relay_place_check: true                    # e / r / n: 놓은 뒤 카메라로 다시 재서 계획과의 오차 기록 (실제 로봇만)
+  relay_place_check: true                    # e / r / n / j: 놓은 뒤 카메라로 다시 재서 계획과의 오차 기록 (실제 로봇만)
   relay_check_warn: [0.01, 5.0]              # 그 오차가 이보다 크면 WARNING: 위치 [m], 방향 [deg]
   relay_check_log: '~/.ros/place_check.csv'  # 오차 기록 파일 ('' = 끔)
+
+# ---- D11 기준: 선반에 마커가 없으므로 D11에 서 있는 트레이의 마커를 잰 값으로 D11 자리를 정함
+d11_ref:
+  d11_ref: '~/.ros/d11_measured.yaml'  # D11 실측 기준 파일 (--do d11ref 등록, n 집기 전 / j 놓은 뒤 갱신; '' = 끔: 모델값)
+  d11_ref_n: 5                         # 기준 = 최근 이만큼 값의 중앙값
+  d11_ref_samples: 5                   # --do d11ref: 측정 횟수
+  d11_ref_warn: [0.01, 3.0, 0.005]     # 기준과 이보다 다르면 WARNING + 기준에 안 넣음: 위치 [m], 방향 [deg], 높이 [m]
+  d11_ref_age_days: 14                 # 최근 값이 이보다 오래되면 WARNING [일] (0 = 끔)
+  d11_empty_check: true                # j (실물): 먼저 D11을 봐서 트레이가 있으면 멈춤
 
 # ---- 파일 / 토픽
 files:
@@ -165,8 +184,10 @@ files:
 
 # ---- --tray-type 프리셋: 고른 종류의 값이 위 값을 덮어씀 (--config / 명령줄 값은 그대로)
 tray_types:
-  # 선반 트레이 (가이드 부품 E): 몸체 150 x 100 x 56, 손잡이 바 91 mm (10 cm 변 방향), 손잡이 윗면 76 mm
-  shelf: {tray_height: 0.076, relay_tray: [0.15, 0.10, 0.056], bot_yaw_offset: 0.0, grasp_depth: 0.024, approach_above: 0.036}
+  # 선반 트레이 (가이드 부품 E): 몸체 150 x 100 x 56, 손잡이 바 91 mm (10 cm 변 방향), 손잡이 윗면 78 mm (실측 11-27; 모델 76)
+  # 마커 중심 간격 57 mm (user 11-27 자로 잼; 실물 L-R 56.5~56.9 mm)
+  shelf: {tray_height: 0.078, relay_tray: [0.15, 0.10, 0.056], bot_yaw_offset: 0.0, grasp_depth: 0.024, approach_above: 0.036,
+          spacing: 0.057}
   # 테스트 트레이 16 x 10: 손잡이 윗면 72 mm, 손잡이가 16 cm 변 방향. 몸체 높이 미측정 (56?)
   test: {tray_height: 0.072, relay_tray: [0.16, 0.10, 0.056],  # 손잡이(ID10->11)는 10 cm 짧은 변 방향 (user 11-26; 11-19 메모는 반대였음)
-         bot_yaw_offset: 0.0, grasp_depth: 0.020, approach_above: 0.04}
+         bot_yaw_offset: 0.0, grasp_depth: 0.020, approach_above: 0.04, spacing: 0.054}

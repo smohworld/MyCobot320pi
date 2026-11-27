@@ -288,7 +288,7 @@ class Layout:
         rg.save(regions, path)
         return True
 
-    def export(self, tray_height=0.076):
+    def export(self, tray_height=0.078):
         """Replay / region files for tray_handle_pick (see the module doc)."""
         fx, fy, fz = self.fork_point()
         tx, ty, _, tray_yaw = self.tray_pose()
@@ -298,7 +298,7 @@ class Layout:
 
         def det(x, y, surface, yaw):
             return dict(stamp=stamp, tray=0, handle_xyz=[x, y, surface + tray_height],
-                        yaw_lr_deg=math.degrees(yaw), spacing=0.054, tilt_deg=0.0,
+                        yaw_lr_deg=math.degrees(yaw), spacing=0.057, tilt_deg=0.0,
                         table_z=surface, camera_q_deg=None)
         files = {
             'tray': det(tx, ty, fz, tray_yaw),
@@ -376,7 +376,7 @@ def main():
                    help='save the layout (--file) as NAME in --presets and exit (no ROS); '
                         'RViz menu: layouts > save as ...')
     p.add_argument('--list', action='store_true', help='list the saved layouts and exit')
-    p.add_argument('--tray-height', type=float, default=0.076,
+    p.add_argument('--tray-height', type=float, default=0.078,
                    help='tray bottom -> handle top for the exported tray files [m]')
     p.add_argument('--frame', default='base')
     p.add_argument('--above', type=float, default=0.04,

@@ -3,6 +3,7 @@ scene objects, and r (the tray from the TurtleBot back to where m picked it)."""
 import contextlib
 import math
 import os
+import shlex
 import time
 
 import cv2
@@ -61,6 +62,9 @@ class BotMixin:
         down at it, measure -> self.bot with the place spot / height / tray direction, and
         (--bot-scene) the TurtleBot + box into the planning scene at that pose."""
         a = self.args
+        # a new TurtleBot pose: a turned tray of an earlier r / j (bot_tray_wall_check) no
+        # longer here (11-27 15:36: e right after such an r still planned with 3 mm)
+        self._bot_turn_pads = None
         need = max(1, a.frames // 2)
         res = self.bot_frames(3)
         if not res and a.use_last:
@@ -120,6 +124,7 @@ class BotMixin:
             else:
                 self.say(f'Burger heading marker ID {a.bot_heading_id}: agrees with the box '
                          f'marker (dot {d:+.2f}, {dist * 1000:.0f} mm)')
+                self.heading_cal_add(p, yaw, h, tilt)
         self.bot = self.bot_from_marker(p, yaw, tilt)
         self.log_detection('bot', res)
         self.save_bot()
@@ -282,6 +287,120 @@ class BotMixin:
         dist = float(np.linalg.norm(v))
         return (float(b @ v) / dist if dist > 1e-6 else 0.0), dist
 
+    def _heading_cal_path(self):
+        return os.path.expanduser(getattr(self.args, 'heading_cal', '') or '')
+
+    def _heading_cal_samples(self):
+        import yaml
+        path = self._heading_cal_path()
+        if not path or not os.path.exists(path):
+            return []
+        try:
+            with open(path) as f:
+                return [list(s) for s in (yaml.safe_load(f) or {}).get('samples') or []]
+        except (OSError, yaml.YAMLError, TypeError, ValueError):
+            return []
+
+    def heading_cal(self):
+        """Where the heading marker sits in the box marker frame (u = marker +x, v = marker
+        +y) -> (u, v, source): the median of the last --heading-cal-n --heading-cal samples
+        (at least --heading-cal-min), else --heading-in-box, else on the --bot-side axis.
+        One that is not on the --bot-side of the box (> 30 deg off) is not used."""
+        a = self.args
+        sx, sy = self._bot_side_vec()
+        side = (float(sx) * 0.12, float(sy) * 0.12, f'on the --bot-side axis')
+        s = self._heading_cal_samples()
+        cand = []
+        if len(s) >= max(1, int(getattr(a, 'heading_cal_min', 3) or 3)):
+            use = np.array([v[:2] for v in s[-max(1, int(getattr(a, 'heading_cal_n', 10) or 10)):]],
+                           float)
+            u, v = np.median(use, axis=0)
+            cand.append((float(u), float(v), f'median of {len(use)} measured ({a.heading_cal})'))
+        hb = getattr(a, 'heading_in_box', None)
+        if hb and len(hb) >= 2:
+            cand.append((float(hb[0]), float(hb[1]), '--heading-in-box'))
+        for u, v, src in cand:
+            n = math.hypot(u, v)
+            if n > 0.03 and (u * sx + v * sy) / n > math.cos(math.radians(30)):
+                return u, v, src
+            self.say(f'WARNING: heading marker place ({u * 1000:+.0f}, {v * 1000:+.0f}) mm ({src}) '
+                     'is not on the --bot-side of the box marker: not used')
+        return side
+
+    def heading_cal_add(self, p, yaw, h, tilt):
+        """Real robot, box marker (p, yaw) and heading marker h seen together (e / n, the box
+        empty): h in the box marker frame added to --heading-cal (last 30 kept). Far off the
+        others (> 10 mm) -> WARNING (marker moved / misread?), still added."""
+        import yaml
+        a = self.args
+        path = self._heading_cal_path()
+        if not path or not a.go or a.layout_poses or self.conn in ('fake', None):
+            return
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        dx, dy = float(h[0] - p[0]), float(h[1] - p[1])
+        u, v = c * dx + s_ * dy, -s_ * dx + c * dy
+        old = self._heading_cal_samples()
+        if old:
+            m = np.median(np.array([o[:2] for o in old[-10:]], float), axis=0)
+            if math.hypot(u - m[0], v - m[1]) > 0.010:
+                self.say(f'WARNING: heading marker in the box frame ({u * 1000:+.1f}, {v * 1000:+.1f}) '
+                         f'mm, {math.hypot(u - m[0], v - m[1]) * 1000:.0f} mm from the earlier ones '
+                         f'({m[0] * 1000:+.1f}, {m[1] * 1000:+.1f}): marker moved / misread?')
+        old.append([round(u, 4), round(v, 4), round(math.degrees(yaw), 2), round(float(tilt), 1),
+                    time.strftime('%Y-%m-%d %H:%M:%S')])
+        old = old[-30:]
+        try:
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            with open(path, 'w') as f:
+                yaml.safe_dump(dict(note='heading marker in the box marker frame: [u (+x), v (+y), '
+                                         'box yaw deg, box marker tilt deg, time] [m]',
+                                    samples=old), f, default_flow_style=None, sort_keys=False)
+        except OSError as e:
+            self.say(f'heading calibration not saved ({e})')
+            return
+        u2, v2, _ = self.heading_cal()
+        self.say(f'heading marker in the box frame ({u * 1000:+.1f}, {v * 1000:+.1f}) mm = '
+                 f'{math.degrees(math.atan2(u, v)):+.1f} deg, added ({len(old)} in {a.heading_cal}; '
+                 f'used now ({u2 * 1000:+.1f}, {v2 * 1000:+.1f}) mm)')
+
+    def bot_tray_wall_check(self, pin):
+        """r / j: the tray measured in the TurtleBot box (self.bot from it): its rotation in
+        the box leaves less than --bot-tray-wall-min to a wall -> Stop before planning (11-27:
+        tray turned 22 deg by hand, 5.5 mm left: 120 s of planning, then timed out)."""
+        from mycobot_tasks import place_scene as ps
+        a = self.args
+        wmin = float(getattr(a, 'bot_tray_wall_min', 0.0) or 0.0)
+        if wmin <= 0 or self.bot is None:
+            return
+        Lb, Wb = ps.parse(shlex.split(a.scene_args or '') + list(getattr(self, 'bot_extra', []) or [])
+                          ).box_inner[:2]
+        L, W = a.relay_tray[:2]                # across the bar, along the bar (L -> R)
+        d = float(pin['yaw']) - float(self.bot['yaw'])
+        half = (abs(math.cos(d)) * W / 2 + abs(math.sin(d)) * L / 2,
+                abs(math.sin(d)) * W / 2 + abs(math.cos(d)) * L / 2)
+        off = list(a.bot_place_offset) + [0.0] * 3
+        o = (off[0] - a.bot_box_offset[0], off[1] - a.bot_box_offset[1])   # tray centre, box frame
+        gap = min(Lb / 2 - half[0] - abs(o[0]), Wb / 2 - half[1] - abs(o[1]))
+        t = math.degrees(math.remainder(d - math.radians(a.bot_yaw_offset), math.pi))
+        txt = (f'tray turned {t:+.0f} deg in the TurtleBot box ({Lb * 100:.0f} x {Wb * 100:.0f} cm): '
+               f'{gap * 1000:.1f} mm to the nearest wall')
+        # --bot-tray-turn-pad (user 11-27, a test): turned more than its angle -> the box legs
+        # planned with its smaller clearance only (no 5 mm try), the wall check down to it
+        tp = list(getattr(a, 'bot_tray_turn_pad', None) or [])
+        if len(tp) >= 2 and (abs(t) > tp[0] or gap < wmin):     # (19.5..20 deg: < wmin too)
+            pad = float(tp[1])
+            if gap >= pad:
+                self._bot_turn_pads = [pad]
+                self.say(f'WARNING: {txt}: turned more than {tp[0]:.0f} deg -> the TurtleBot box '
+                         f'part planned with {pad * 1000:.0f} mm clearance only (--bot-tray-turn-pad; '
+                         'tight: watch it, step mode recommended)')
+                return
+        if gap < wmin:
+            raise Stop(f'{txt} (< --bot-tray-wall-min {wmin * 1000:.0f} mm): no safe way out of '
+                       'the box, nothing planned. Straighten the tray in the box (along the box '
+                       'axis) and run again (it may also be resting on a wall)')
+        self.say(txt)
+
     def _bot_side_vec(self):
         side = '+y'
         sa = (self.args.scene_args or '').replace('=', ' ').split()
@@ -322,15 +441,16 @@ class BotMixin:
             raise Stop(f'TurtleBot from the tray: heading marker ID {a.bot_heading_id} at '
                        f'({h[0] * 1000:.0f}, {h[1] * 1000:.0f}) mm is {dist * 1000:.0f} mm from the '
                        'tray (50..400 mm expected): another marker / Burger moved? nothing planned')
-        sx, sy = self._bot_side_vec()
-        yaw = math.remainder(math.atan2(v[1], v[0]) - math.atan2(sy, sx), 2 * math.pi)
+        cu, cv, csrc = self.heading_cal()
+        yaw = math.remainder(math.atan2(v[1], v[0]) - math.atan2(cv, cu), 2 * math.pi)
         # info only: the tray in the box vs the Burger (not used)
         t = math.remainder(pin['yaw'] - math.radians(a.bot_yaw_offset) - yaw, math.pi)
         self.bot_how = f'HEADING ID{a.bot_heading_id} (tray not used)'
         self.say(f'Burger heading marker ID {a.bot_heading_id} at ({h[0] * 1000:.0f}, '
                  f'{h[1] * 1000:.0f}) mm, {dist * 1000:.0f} mm from the tray: Burger that way '
                  f'(box marker +x {math.degrees(yaw):.0f} deg; the tray lies {math.degrees(t):+.0f} '
-                 'deg off the box axis, not used)')
+                 f'deg off the box axis, not used; marker in the box frame ({cu * 1000:+.1f}, '
+                 f'{cv * 1000:+.1f}) mm = {math.degrees(math.atan2(cu, cv)):+.1f} deg, {csrc})')
         off = list(a.bot_place_offset) + [0.0] * (3 - len(a.bot_place_offset))
         c, s_ = math.cos(yaw), math.sin(yaw)
         hxy = np.asarray(pin['p'][:2], float)
@@ -397,6 +517,7 @@ class BotMixin:
         pin; --table-z = the box floor from the measured handle top, heights set, and
         self.bot (+ scene) from the tray (bot_from_tray). The caller restores --table-z."""
         a = self.args
+        self._bot_turn_pads = None            # set again by bot_tray_wall_check (this tray)
         rb = self.region('bot')
         z0 = rb['z'] if rb else (self.bot['place_z'] if self.bot else None)
         if z0 is None:
@@ -428,7 +549,9 @@ class BotMixin:
             self.bot = self.bot_from_tray(pin)
             self.save_bot()
             self.bot_to_scene()
-        return self._tray_on_bot_closer(pin)
+        pin = self._tray_on_bot_closer(pin)
+        self.bot_tray_wall_check(pin)
+        return pin
 
     def _tray_on_bot_closer(self, pin):
         """The search view over the TurtleBot is high (the gripper kept over the Burger /

@@ -41,6 +41,11 @@ D11_ON, DESK_ON, BOX_ON = ('shelf_fork',), ('desk',), ('bot_box',)   # NOT desk_
 TMP_ID = 'relay_tray_plan'
 BASE_PAD_ID = 'relay_tray_basepad'   # the held tray grown by --relay-base-pad (_contacts)
 BASE_PARTS = {'base', 'link1', 'robot_mount'}   # only these count against BASE_PAD_ID
+RACK_PAD_ID = 'relay_tray_rackpad'   # the held tray grown by --relay-rack-pad (_contacts)
+RACK_PARTS = {'shelf_rack'}          # only these count against RACK_PAD_ID
+# the clearance copies of the held tray: (object id, option, parts that count, label)
+PAD_COPIES = ((BASE_PAD_ID, 'relay_base_pad', BASE_PARTS, 'base pad'),
+              (RACK_PAD_ID, 'relay_rack_pad', RACK_PARTS, 'rack pad'))
 # empty arm travelling into / out of D11: fingers closed (inside the held tray's envelope,
 # the way it was checked with the tray); opened over the handle only
 CLOSED = 0.0
@@ -433,10 +438,16 @@ class RelayMixin:
             pr = tuple(sorted((c.contact_body_1, c.contact_body_2)))
             if pr == ('base', 'desk'):
                 continue
-            if BASE_PAD_ID in pr:      # the base-only clearance copy: only base parts count
-                if not (set(pr) - {BASE_PAD_ID}) <= BASE_PARTS:
-                    continue
-                pr = tuple(sorted((TRAY_ID, (set(pr) - {BASE_PAD_ID}).pop() + '(base pad)')))
+            skip = False
+            for pid, _, parts, name in PAD_COPIES:   # clearance copies: only their parts count
+                if pid in pr:
+                    other = set(pr) - {pid}
+                    if not other or not other <= parts:
+                        skip = True
+                        break
+                    pr = tuple(sorted((TRAY_ID, other.pop() + f'({name})')))
+            if skip:
+                continue
             if touch and TRAY_ID in pr and (set(pr) - {TRAY_ID}) <= set(touch):
                 continue
             # empty fingers at the handle of a tray standing in the world (at_tray = its
@@ -448,12 +459,18 @@ class RelayMixin:
         return sorted(out)
 
     def _held_objects(self, pad, base_pad=True):
-        """The held tray (grown by pad) + its --relay-base-pad copy (when bigger than pad):
-        the copy only counts against BASE_PARTS (see _contacts)."""
+        """The held tray (grown by pad) + its --relay-base-pad / --relay-rack-pad copies
+        (each when bigger than pad): a copy only counts against its parts (BASE_PARTS /
+        RACK_PARTS, see _contacts). base_pad False: no copies (real contacts only)."""
         out = [self._tray_attached(pad)]
-        bp = getattr(self.args, 'relay_base_pad', 0.0) or 0.0
-        if base_pad and bp > pad:
-            out.append(self._tray_attached(bp, BASE_PAD_ID))
+        if not base_pad:
+            return out
+        for pid, opt, _, _ in PAD_COPIES:
+            if pid == RACK_PAD_ID and not getattr(self, '_rl_rack_on', False):
+                continue          # the rack pad: only on the tilted carry grid (_grid)
+            bp = getattr(self.args, opt, 0.0) or 0.0
+            if bp > pad:
+                out.append(self._tray_attached(bp, pid))
         return out
 
     def _touching(self, q, surfaces):
@@ -518,13 +535,64 @@ class RelayMixin:
             raise RelayFail(f'{label}: collision when straightened')
         return out + [qn]
 
-    def _grid(self, S, qS, yaw, goals, label, cap=None):
+    def _grid(self, S, qS, yaw, goals, label, cap=None, rack_cost=False):
+        """The tilted carry grid search (_grid_run) with the --relay-rack-pad copy on: the
+        carry out of the shelf passes the rack panel end (11-27 sim: 5 mm = exactly the plan
+        pad, 1 deg servo error hits it); the turn at the pull point (9 mm) cannot have more.
+        rack_cost: --relay-rack-cost on (the carry out of the shelf only)."""
+        gen = self._grid_run(S, qS, yaw, goals, label, cap, rack_cost)
+        while True:                    # on only while the search itself runs, not between
+            self._rl_rack_on = True    # the goals it yields (the caller's own checks)
+            try:
+                item = next(gen)
+            except StopIteration:
+                return
+            finally:
+                self._rl_rack_on = False
+            yield item
+
+    def _rack_near(self, q, pad):
+        """The held tray grown by pad touches the shelf rack at q (a clearance probe, not a
+        collision: only the RACK_PAD_ID copy, only shelf_rack counts)."""
+        from moveit_msgs.msg import RobotState
+        from moveit_msgs.srv import GetStateValidity
+        from sensor_msgs.msg import JointState
+        rq = GetStateValidity.Request(group_name='arm')
+        rq.robot_state = RobotState(
+            joint_state=JointState(name=ARM_JOINTS + ['gripper_controller'],
+                                   position=[float(v) for v in q] + [float(self.args.hold_grip)]),
+            attached_collision_objects=[self._tray_attached(pad, RACK_PAD_ID)], is_diff=False)
+        r = _wait(self._rl_sv.call_async(rq), 20.0)
+        if r is None:
+            raise Stop('check_state_validity: no answer')
+        return any(RACK_PAD_ID in (c.contact_body_1, c.contact_body_2) and
+                   ({c.contact_body_1, c.contact_body_2} - {RACK_PAD_ID}) <= RACK_PARTS
+                   for c in r.contacts)
+
+    def _rack_pen(self, q):
+        """--relay-rack-cost: how many of its distances the held tray at q is closer to the
+        shelf rack than (0 = farther than all). Biggest distance first: one probe when clear."""
+        n = 0
+        for pad in sorted((float(v) for v in (self.args.relay_rack_cost or ())), reverse=True):
+            if not self._rack_near(q, pad):
+                break
+            n += 1
+        return n
+
+    def _grid_run(self, S, qS, yaw, goals, label, cap=None, rack_cost=False):
         """A* over the --relay-carry-z plane (2 cm grid, tool tilted <= --relay-tilt, tray
         held) from S toward the goals (heuristic: straight distance to the nearest goal not
         reached yet). A generator: yields (goal, joint path) as each goal is reached, so the
         caller stops as soon as one works out; ends when none is left / nothing reachable /
-        cap points settled (self._rl_grid_capped = True)."""
+        cap points settled (self._rl_grid_capped = True).
+        rack_cost (--relay-rack-cost / --relay-rack-cost-w, 11-27): an edge whose end has the
+        tray closer to the shelf rack than k of the distances costs (1 + k * w) times its
+        length: not refused (the start next to the rack must stay plannable), the search
+        takes a way farther from the rack when there is one. Costs only grow, so the
+        straight-distance heuristic stays admissible."""
         a, z = self.args, self.args.relay_carry_z
+        rack_w = float(getattr(a, 'relay_rack_cost_w', 0.0) or 0.0) \
+            if rack_cost and getattr(a, 'relay_rack_cost', None) else 0.0
         self._rl_grid_capped = False
         x0, x1, y0, y1 = a.relay_grid
         xs = np.round(np.arange(x0, x1 + 1e-9, 0.02), 3)
@@ -578,6 +646,10 @@ class RelayMixin:
                 # grid points the tray edge can still graze the arm base (dense check)
                 if not ok or any(self._contacts(qe) for qe in e[::-1]):
                     continue
+                if rack_w:
+                    dv *= 1.0 + rack_w * self._rack_pen(qq)
+                    if d + dv >= best.get(v, 1e9):
+                        continue
                 best[v], qof[v], par[v], eq[v] = d + dv, qq, u, e
                 heapq.heappush(pq, (best[v] + h(v), v))
         print(f'  relay {label}: grid {len(done)} points settled, '
@@ -675,8 +747,10 @@ class RelayMixin:
         y = lr_yaw + math.radians(self.args.grip_yaw_offset)
         return [math.remainder(y, 2 * math.pi), math.remainder(y + math.pi, 2 * math.pi)]
 
-    def plan_leg_a(self, d11):
+    def plan_leg_a(self, d11, desk=None):
         """D11 -> desk spot. d11 = dict(h=handle top xyz, lr=tray L -> R yaw).
+        desk: the tray as it stands on the desk (measured: j part 2): that one spot, the
+        turn ends at its tool yaw (any turn angle) instead of +-90 and a desk spot grid.
         A generator: yields dict(steps, spot, yc, q_up, q_rel) for every desk spot that
         works from D11 (q_up: empty arm over the tray on the desk), spots within 5 cm of
         one in self._rl_bad_spots (desk -> TurtleBot failed there) skipped; RelayFail
@@ -720,19 +794,26 @@ class RelayMixin:
                         except RelayFail as e:
                             why.append(str(e))
                             continue
-                        for turn in (90.0, -90.0):
+                        if desk is None:
+                            turns = (90.0, -90.0)
+                        else:
+                            turns = tuple(math.degrees(math.remainder(yd - y0, 2 * math.pi))
+                                          for yd in self._yaws(desk['lr']))
+                        for turn in turns:
                             yc = y0 + math.radians(turn)
                             try:
                                 tq = self._turn(pull[-1], P, y0, yc, False, f'{tag}: turn {turn:+.0f}')
                             except RelayFail as e:
                                 why.append(str(e))
                                 continue
-                            spots = self.desk_spots(yc)
+                            spots = self.desk_spots(yc) if desk is None else \
+                                [(float(desk['h'][0]), float(desk['h'][1]))]
                             if not spots:
                                 why.append(f'{tag}: turn {turn:+.0f}: no spot candidate on the desk')
                                 continue
                             reached = set()
-                            for s, path in self._grid(P[:2], tq[-1], yc, spots, f'{tag} turn {turn:+.0f}'):
+                            for s, path in self._grid(P[:2], tq[-1], yc, spots, f'{tag} turn {turn:+.0f}',
+                                                      rack_cost=True):
                                 reached.add(s)
                                 if any(math.dist(s, b) < 0.05 for b in self._rl_bad_spots):
                                     continue
@@ -1490,6 +1571,7 @@ class RelayMixin:
         """--layout-poses (simulation): the poses as arranged in RViz (ros2 run mycobot_tasks
         layout writes them on every change), read now: no camera, no restart needed.
         -> dict(d11, bot_place, bot_tray); self.bot from the layout marker."""
+        self._bot_turn_pads = None          # layout poses: no measured turned tray
         import yaml
         if self.conn not in ('fake', None):
             raise Stop(f'--layout-poses is for the simulation (driver {self.conn!r}): the real '
@@ -1516,7 +1598,16 @@ class RelayMixin:
                 a.scene_args, tuple(self.bot_extra),
                 os.path.getmtime(lay) if '--layout' in a.scene_args and os.path.exists(lay) else 0,
                 tuple(a.relay_tray), a.relay_tilt, a.relay_carry_z, tuple(a.relay_spots or ()),
-                tuple(a.relay_spot_r), tuple(a.relay_plan_pads))
+                tuple(a.relay_spot_r), tuple(a.relay_plan_pads), self._relay_key_more())
+
+    def _relay_key_more(self):
+        """Options the plans depend on beyond the poses (a changed one must not reuse)."""
+        a = self.args
+        return (a.relay_pull_r, getattr(a, 'relay_base_pad', 0.0),
+                getattr(a, 'relay_rack_pad', 0.0), tuple(getattr(a, 'relay_rack_cost', None) or ()),
+                getattr(a, 'relay_rack_cost_w', 0.0),
+                a.grasp_depth, a.place_drop,
+                a.tray_height, a.approach_above, tuple(a.relay_spots_bot or ()))
 
     def _with_pads(self, plan, label):
         """plan() with the held tray grown by each --relay-plan-pad value in turn (the most
@@ -1524,22 +1615,44 @@ class RelayMixin:
         0 mm = WARNING (a tight path: watch it on the real robot)."""
         a = self.args
         pads = list(a.relay_plan_pads)
+        over = getattr(self, '_bot_turn_pads', None)
+        if over and 'TurtleBot' in label:      # tray turned in the box (bot_tray_wall_check)
+            pads = list(over)
         err = None
         dl = self._plan_deadline()
         dl.__enter__()
+        # --relay-pad-share: each clearance gets its share of --relay-plan-timeout (11-27: one
+        # shared deadline let a slow 5 mm search use all of it, 3 mm never tried); the last
+        # one gets what is left. Within an outer deadline (owner elsewhere) never past it.
+        outer, t0 = self._rl_deadline, time.monotonic()
+        T = float(a.relay_plan_timeout or 0.0)
+        share = [float(v) for v in (getattr(a, 'relay_pad_share', None) or [])]
         try:
             for i, pad in enumerate(pads):
                 a.relay_plan_pad = pad
+                last = i + 1 == len(pads)
+                if T > 0 and share and not last:
+                    end = t0 + T * sum(share[:i + 1])
+                    self._rl_deadline = end if outer is None else min(outer, end)
+                else:
+                    self._rl_deadline = outer
                 try:
                     out = plan()
                 except Stop as e:
-                    if self._abort.is_set() or isinstance(e, PlanTimeout):
+                    if self._abort.is_set():
+                        raise
+                    timed = isinstance(e, PlanTimeout)
+                    if timed and (last or (outer is not None and time.monotonic() >= outer)):
                         raise
                     err = e
-                    if i + 1 < len(pads):
-                        self.say(f'{label}: no way with {pad * 1000:.0f} mm clearance around '
+                    if not last:
+                        why = (f'not found in its {self._rl_deadline - t0:.0f} s share' if timed
+                               else 'no way')
+                        self.say(f'{label}: {why} with {pad * 1000:.0f} mm clearance around '
                                  f'the tray: trying {pads[i + 1] * 1000:.0f} mm')
                     continue
+                finally:
+                    self._rl_deadline = outer
                 self._rl_pad_used = pad
                 if pad <= 0.0:
                     self.say(f'WARNING: {label} planned with NO clearance margin around the '
@@ -1548,7 +1661,7 @@ class RelayMixin:
                     self.say(f'{label}: planned with {pad * 1000:.0f} mm clearance around the tray')
                 return out
         finally:
-            a.relay_plan_pad = pads[0]
+            a.relay_plan_pad = a.relay_plan_pads[0]     # the default again (pads may be overridden)
             dl.__exit__(None, None, None)
         raise err
 
@@ -1597,6 +1710,30 @@ class RelayMixin:
                  f'({A["spot"][0]:+.2f}, {A["spot"][1]:+.2f})')
         return A
 
+    def relay_plan_a_desk(self, d11, desk):
+        """j part 2: D11 <-> the tray as measured on the desk (desk = dict(h, lr)), the
+        planned D11 pose d11. -> A (plan_leg_a; run backwards by the caller) or Stop."""
+        return self._with_pads(lambda: self._relay_plan_a_desk_once(d11, desk),
+                               'desk -> D11')
+
+    def _relay_plan_a_desk_once(self, d11, desk):
+        self.relay_setup()
+        a = self.args
+        self._rl_surfaces = [(float(d11['h'][2]) - a.tray_height, D11_ON),
+                             (self._desk_geo[3], self._desk_on())]
+        # the tray on the desk is the one this plan takes: not an obstacle while planning
+        self._remove_world(TRAY_ID)
+        self._rl_bad_spots = []
+        self._rl_rng = np.random.default_rng(0)
+        t0 = time.monotonic()
+        try:
+            A = next(self.plan_leg_a(d11, desk))
+        except RelayFail as e:
+            raise Stop(f'relay plan desk -> D11 (tray as measured) failed:\n  {e}')
+        self.say(f'relay plan desk -> D11 OK in {time.monotonic() - t0:.0f} s (tray as '
+                 f'measured on the desk)')
+        return A
+
     def _regrasp_ok(self, A):
         """Quick check of a desk spot before the TurtleBot is known: the normal arm can take
         the tray there with the fingers turned 180 deg and lift it to the carry height (the
@@ -1636,12 +1773,15 @@ class RelayMixin:
         return B
 
     # ------------------------------------------------------------------ desk <-> TurtleBot only
-    def relay_desk_A(self, d):
+    def relay_desk_A(self, d, prefer=None):
         """A tray standing on the desk (d = dict(h=handle top xyz, lr=L -> R)) as leg A
         leaves it -> the A dict plan_leg_b needs (spot, yc, q_rel), or None (no normal-arm
-        grasp there)."""
+        grasp there). prefer: tool yaw tried first (n: the one leg A put it down with)."""
         pd = np.array([d['h'][0], d['h'][1], self._desk_tip()])
-        for yc in self._yaws(d['lr']):
+        yaws = self._yaws(d['lr'])
+        if prefer is not None:
+            yaws.sort(key=lambda y: abs(math.remainder(y - prefer, 2 * math.pi)))
+        for yc in yaws:
             q = self._ik_any(pd, yc, False)
             if q is not None:
                 return dict(spot=np.array(d['h'][:2], float), yc=yc, q_rel=q)
@@ -1719,7 +1859,7 @@ class RelayMixin:
                a.scene_args, tuple(self.bot_extra),
                os.path.getmtime(lay) if '--layout' in a.scene_args and os.path.exists(lay) else 0,
                tuple(a.relay_tray), a.relay_tilt, a.relay_carry_z, tuple(a.relay_spots or ()),
-               tuple(a.relay_spot_r), tuple(a.relay_plan_pads))
+               tuple(a.relay_spot_r), tuple(a.relay_plan_pads), self._relay_key_more())
         self._rl_surfaces = [(float(d11['h'][2]) - a.tray_height, D11_ON),
                              (self._desk_geo[3], self._desk_on()),
                              (float(bot['h'][2]) - a.tray_height, BOX_ON)]

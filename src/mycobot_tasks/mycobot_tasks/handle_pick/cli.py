@@ -29,6 +29,7 @@ GROUPS = {   # config section -> --help title
     'relay_safety': 'relay clearances (collision checks)',
     'relay_speed': 'relay speeds',
     'relay_end': 'after the relay',
+    'd11_ref': 'D11 target from measured trays (no shelf marker)',
     'files': 'files / topics',
 }
 
@@ -92,9 +93,11 @@ def main():
     G('--config', default=None,
       help=f'YAML over the defaults ({CONFIG}): only the keys to change, under the same '
            'section names')
-    G('--do', choices=['', 'none', 'detect', 'd11bot', 'botd11', 'deskbot', 'botdesk'],
+    G('--do', choices=['', 'none', 'detect', 'd11bot', 'botd11', 'deskbot', 'botdesk',
+                       'd11ref'],
       default='', help='first action: detect (d), d11bot (n), botd11 (j), deskbot (e), '
-                       'botdesk (r)')
+                       'botdesk (r), d11ref (real robot: register the D11 reference from a '
+                       'tray pushed into D11 by hand)')
     G('--search', action='store_true', help='go to the search pose first (it becomes home)')
     G('--replay', nargs='?', const='~/.ros/tray_handle_last.yaml', default=None,
       help='SIMULATION: use the saved detection instead of the camera and start from the '
@@ -120,6 +123,14 @@ def main():
            'turn, unless --relay-spots / --relay-desk is given; auto = like n / j '
            '(--relay-spot-r). Default: right of the arm base, so the held tray does not '
            'pass behind it (11-26: the tray hit the base back on the way to (-0.20,-0.08))')
+    G('--sim-desk-error', type=lambda t: [float(v) for v in t.split(',')], default=None,
+      help='SIMULATION / dry run, n / j: the tray put on the desk is taken this far off the '
+           'plan before the next leg is planned: dx,dy [m],dyaw [deg] (real landing error, '
+           'e.g. 0.004,-0.002,1.5)')
+    G('--sim-d11-error', type=lambda t: [float(v) for v in t.split(',')], default=None,
+      help='SIMULATION (--layout-poses), n / j: the D11 pose given to the planner is this '
+           'far off the shelf in the scene: dx,dy [m],dyaw [deg][,dz [m]] (measurement / '
+           'reference error)')
     G('--sim-speed', type=float, default=1.0,
       help='SIMULATION only (fake driver): motions this many times faster (relay paths '
            'and MoveIt moves; e.g. 3 = 3x, 0.5 = half speed). The real robot ignores it')
@@ -218,6 +229,22 @@ def main():
            'first when it is not in view) [m]')
     G('--heading-keep-s', type=float,
       help='heading marker not in a view: the one seen up to this long ago is used [s]')
+    G('--heading-in-box', type=lambda t: [float(v) for v in t.split(',')],
+      help='u,v: the heading marker in the box marker frame (u = marker +x, v = marker +y) [m] '
+           '(r / j: the box direction from tray -> heading marker; real 11-27: ~7.5 mm beside '
+           'the box marker axis = 3.5 deg). Used until --heading-cal has --heading-cal-min samples')
+    G('--heading-cal', help='file the measured heading marker places (box marker frame) are '
+                            "added to (real e / n: both markers seen; '' = off)")
+    G('--heading-cal-n', type=int, help='median of the last this many --heading-cal samples')
+    G('--heading-cal-min', type=int,
+      help='at least this many --heading-cal samples, else --heading-in-box is used')
+    G('--bot-tray-turn-pad', type=lambda t: [float(v) for v in t.split(',')],
+      help='deg,pad: r / j tray turned in the box more than deg -> the TurtleBot box part '
+           'planned with pad clearance only (no bigger try) and the wall check down to pad '
+           '[deg, m] (empty = off)')
+    G('--bot-tray-wall-min', type=float,
+      help='r / j: the tray measured in the box closer than this to a box wall (its rotation '
+           'in the box) -> stop before planning: straighten it [m] (0 = off)')
     G('--bot-marker-dz', type=float,
       help='TurtleBot marker plane this far ABOVE the surface the tray goes on [m] '
            '(0 = marker lies on that surface, e.g. on the box floor)')
@@ -359,6 +386,20 @@ def main():
            '(D11 fork / desk top / TurtleBot box floor, not its walls): contacts with that '
            'surface are normal (not collisions) [m]; covers the shelf margin (1 cm) + the '
            'tray clearance (--relay-plan-pad)')
+    G('--relay-rack-pad', type=float,
+      help='n / j: the held tray this far from the shelf rack (shelf_rack only; the fork '
+           'it stands on is not affected) [m] (sim 11-27: 1 deg servo error hit the rack on '
+           'the carry out of the shelf) (0 = off)')
+    G('--relay-pad-share', type=lambda t: [float(v) for v in t.split(',')],
+      help='n / j / e / r: share of --relay-plan-timeout for each --relay-plan-pad value in turn '
+           '(e.g. 0.7 = the 5 mm try gets 70 %%, the next one the rest); empty = one shared deadline')
+    G('--relay-rack-cost', type=lambda t: [float(v) for v in t.split(',') if v.strip()],
+      help='n / j: on the carry out of the shelf (tilted grid) the tray closer to the shelf '
+           'rack than these distances costs more: the way farther from the rack is taken when '
+           'there is one (not a refusal) [m], e.g. 0.01,0.02 (empty = off)')
+    G('--relay-rack-cost-w', type=float,
+      help='n / j: --relay-rack-cost weight: a grid step closer than k of the distances costs '
+           '(1 + k * this) times its length')
     G('--relay-desk-clear', type=float,
       help='n / j / e / r: empty-arm moves (OMPL: to the start, arm switch, home) keep this far '
            'above the desk top [m] (0 = off)')
@@ -407,6 +448,19 @@ def main():
       help='n / j / e / r: the home pose they end in (and go to after an error before '
            'carrying), J1..J6 [deg]; empty = the arm pose when the program started (not '
            'moved by the camera re-centring of a detection)')
+    # ---- d11_ref: D11 기준 (선반 마커 없음: 트레이 마커 실측)
+    G = grp['d11_ref'].add_argument
+    G('--d11-ref', help="D11 reference file: trays measured standing on D11 (--do d11ref, n, "
+                        "j); j puts the tray at its median ('' = off: the layout model)")
+    G('--d11-ref-n', type=int, help='D11 reference = median of the last this many samples')
+    G('--d11-ref-samples', type=int, help='--do d11ref: measurements taken')
+    G('--d11-ref-warn', type=lambda t: [float(v) for v in t.split(',')],
+      help='a D11 measurement further than this off the reference: WARNING, not added: '
+           'position [m], yaw [deg], height [m]')
+    G('--d11-ref-age-days', type=float,
+      help='WARNING when the newest D11 sample is older than this [days] (0 = off)')
+    G('--d11-empty-check', type=lambda t: t.strip().lower() in ('1', 'true', 'yes', 'on'),
+      help='j (real robot): camera over D11 first, a tray there -> stop; true / false')
     # ---- files: 파일 / 토픽
     G = grp['files'].add_argument
     G('--relay-d11',
@@ -429,8 +483,8 @@ def main():
     while i < len(sys.argv) - 1:          # '--relay-desk -0.2,0,90': a value starting with '-'
         t = sys.argv[1 + i]
         nxt = sys.argv[2 + i] if i + 2 < len(sys.argv) else None
-        if t in ('--bot-place-offset', '--bot-box-offset', '--relay-spots', '--relay-desk',
-                 '--relay-spots-bot',
+        if t in ('--bot-place-offset', '--bot-box-offset', '--relay-spots', '--relay-desk', '--heading-in-box',
+                 '--relay-spots-bot', '--sim-desk-error', '--sim-d11-error',
                  '--relay-grid', '--relay-home') and nxt and nxt[:1] == '-':
             argv.append(f'{t}={nxt}')
             i += 2
@@ -450,7 +504,7 @@ def main():
         a.error('unknown option(s): ' + ', '.join(hints))
     args.tray = 0                   # the tray last measured (set by every detection)
     for o in ('relay_tray', 'bot_place_offset', 'bot_box_offset', 'bot_r_range', 'relay_grid',
-              'relay_spot_r', 'relay_plan_pad', 'relay_grid_budget', 'relay_place_shift',
+              'relay_spot_r', 'relay_plan_pad', 'relay_grid_budget', 'relay_place_shift', 'relay_rack_cost', 'relay_pad_share',
               'relay_home'):
         if isinstance(getattr(args, o), (int, float)):     # one number in the YAML
             setattr(args, o, [getattr(args, o)])
@@ -495,7 +549,8 @@ def main():
                  'd11bot': ('D11 -> desk -> TurtleBot', app.act_d11_to_bot),
                  'botd11': ('TurtleBot -> desk -> D11', app.act_bot_to_d11),
                  'deskbot': ('desk -> TurtleBot', app.act_desk_to_bot),
-                 'botdesk': ('TurtleBot -> desk', app.act_bot_to_desk)}
+                 'botdesk': ('TurtleBot -> desk', app.act_bot_to_desk),
+                 'd11ref': ('register the D11 reference', app.act_d11_ref)}
         if args.replay:
             app.submit('replay start', app.act_replay_start)
             app.jobs.join()

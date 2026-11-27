@@ -1,0 +1,67 @@
+### e/r, current defaults
+B01_1439 e: OK  103 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B01_1439 r: OK  141 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B02_1447 e: OK  171 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B02_1447 r: OK  145 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B03_1457 e: OK   82 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B03_1457 r: OK   52 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B04_1510 e: OK   65 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B04_1510 r: OK   56 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B05_1535 e: OK   67 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B05_1535 r: OK  105 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B06_1639 e: OK  249 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B06_1639 r: OK   75 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B07_1721 e: OK   64 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B07_1721 r: OK   52 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B08_1726 e: OK   66 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B08_1726 r: OK  141 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B09_1732 e: OK  175 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B09_1732 r: OK  142 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B10_0928 e: OK  183 s spot () plan + s pad / dense OK perturb 0 ok, HIT in 0.5 deg desk -> TurtleBot; 1 deg desk -> TurtleBot lower tilted, straighten, into the box: 10 of 236 poses, [('link4', 'robot_mount')] / empty hand up: 9 of 37 poses, [('l
+B10_0928 r: OK  140 s spot () plan + s pad / dense OK perturb 0 ok, HIT in 0.5 deg TurtleBot -> desk; 1 deg TurtleBot -> desk down to the handle in the box: 9 of 34 poses, [('link4', 'robot_mount')] / lift out of the box, tilt, up: 10 of 236 pose
+B11_0930 e: OK  167 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B11_0930 r: OK  144 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B12_0933 e: OK  168 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B12_0933 r: OK  144 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+### e/r, shifted grid + rack cost
+B01_1439 e: OK  154 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B01_1439 r: OK  125 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B02_1447 e: OK  146 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B02_1447 r: OK  122 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B03_1457 e: OK  156 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B03_1457 r: OK  130 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B04_1510 e: OK  162 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B04_1510 r: OK  136 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B05_1535 e: OK  167 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B05_1535 r: OK  154 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B06_1639 e: OK  209 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B06_1639 r: OK  216 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B07_1721 e: OK  221 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B07_1721 r: OK  152 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B08_1726 e: OK  124 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B08_1726 r: OK   82 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B09_1732 e: OK   96 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B09_1732 r: OK   79 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B10_0928 e: OK  117 s spot () plan + s pad / dense OK perturb 0 ok, HIT in 0.5 deg desk -> TurtleBot; 1 deg desk -> TurtleBot lower tilted, straighten, into the box: 10 of 236 poses, [('link4', 'robot_mount')] / empty hand up: 9 of 37 poses, [('l
+B10_0928 r: OK   63 s spot () plan + s pad / dense OK perturb 0 ok, HIT in 0.5 deg TurtleBot -> desk; 1 deg TurtleBot -> desk down to the handle in the box: 9 of 34 poses, [('link4', 'robot_mount')] / lift out of the box, tilt, up: 10 of 236 pose
+B11_0930 e: OK   70 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B11_0930 r: OK   59 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B12_0933 e: OK   74 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+B12_0933 r: OK   62 s spot () plan + s pad / dense OK perturb 1 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 53 poses, [('desk', 'relay_tray')]
+### n/j, shifted grid + rack cost
+B01_1439 n: OK  142 s spot (-0.20, -0.02) plan 9+12 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg desk -> TurtleBot carry (tilted) to the turn point over the box: 1 of 253 poses: base(base pad)-relay_tray x1 / lift off the desk: 1 of 51
+B01_1439 j: OK  129 s spot (-0.20, +0.04) plan 18+7 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B02_1447 n: OK  143 s spot (-0.20, -0.02) plan 9+13 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg desk -> TurtleBot carry (tilted) to the turn point over the box: 1 of 260 poses: base(base pad)-relay_tray x1 / lift off the desk: 1 of 51
+B02_1447 j: OK  131 s spot (-0.20, +0.04) plan 19+7 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B03_1457 n: OK  171 s spot (-0.20, -0.02) plan 9+42 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg desk -> TurtleBot carry (tilted) to the turn point over the box: 1 of 247 poses: base(base pad)-relay_tray x1 / lift off the desk: 1 of 51
+B03_1457 j: OK  151 s spot (-0.20, +0.04) plan 37+7 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B04_1510 n: OK  121 s spot (-0.20, -0.02) plan 9+4 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B04_1510 j: OK  121 s spot (-0.20, +0.04) plan 17+7 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B05_1535 n: OK  126 s spot (-0.20, -0.02) plan 9+4 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B05_1535 j: OK  129 s spot (-0.20, +0.04) plan 18+7 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B06_1639 n: OK  143 s spot (-0.20, -0.02) plan 10+4 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg desk -> TurtleBot lift off the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B06_1639 j: OK  138 s spot (-0.20, +0.04) plan 20+8 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+B07_1721 n: OK  169 s spot (-0.20, -0.02) plan 10+15 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg desk -> TurtleBot carry (tilted) to the turn point over the box: 1 of 235 poses: base(base pad)-relay_tray x1 / lift off the desk: 1 of 51
+B07_1721 j: OK  253 s spot (-0.20, +0.04) plan 32+15 s pad 5/5 dense OK perturb 3 ok, HIT in 1 deg TurtleBot -> desk put down on the desk: 1 of 51 poses, [('desk', 'relay_tray')]
+
+[killed]

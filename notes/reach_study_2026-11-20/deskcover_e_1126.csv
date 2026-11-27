@@ -1,0 +1,79 @@
+x,y,yaw,ok,plan_s,pad_mm,why
+-0.3,-0.06,0.0,0,6,,"relay: desk tray (-300, -60) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-300, -60) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-300  -60  101] mm"
+-0.3,-0.06,60.0,0,3,,"relay: desk tray (-300, -60) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-300, -60) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-300  -60  101] mm"
+-0.3,-0.06,120.0,0,3,,"relay: desk tray (-300, -60) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-300, -60) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-300  -60  101] mm"
+-0.3,0.0,0.0,0,6,,"relay: desk tray (-300, 0) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-300, 0) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-300    0  111] mm"
+-0.3,0.0,60.0,0,8,,"relay: desk tray (-300, 0) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-300, 0) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-300    0  111] mm"
+-0.3,0.0,120.0,0,7,,"relay: desk tray (-300, 0) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-300, 0) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-300    0  111] mm"
+-0.3,0.06,0.0,0,2,,"ERROR: --relay-desk -0.300,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.300,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.3,0.06,60.0,0,5,,"ERROR: --relay-desk -0.300,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.300,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.3,0.06,120.0,0,2,,"ERROR: --relay-desk -0.300,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.300,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.24,-0.18,0.0,0,7,,"relay: desk tray (-240, -180) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-240, -180) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-240 -180  111] mm"
+-0.24,-0.18,60.0,0,4,,"relay: desk tray (-240, -180) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-240, -180) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-240 -180  111] mm"
+-0.24,-0.18,120.0,0,6,,"relay: desk tray (-240, -180) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-240, -180) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-240 -180  111] mm"
+-0.24,-0.12,0.0,1,14,5,
+-0.24,-0.12,60.0,1,30,5,
+-0.24,-0.12,120.0,1,27,5,
+-0.24,-0.06,0.0,1,14,5,
+-0.24,-0.06,60.0,1,29,5,
+-0.24,-0.06,120.0,1,15,5,
+-0.24,0.0,0.0,1,65,5,
+-0.24,0.0,60.0,0,90,,"relay regrasp 180, box tool yaw 2 unturned: grid 106 points settled, 3/3 goals not reached | relay regrasp 180, box tool yaw -178 unturned: grid 106 points settled, 3/3 goals not reached | TIMEOUT"
+-0.24,0.0,120.0,1,63,5,
+-0.24,0.06,0.0,0,2,,"ERROR: --relay-desk -0.240,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.240,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.24,0.06,60.0,0,2,,"ERROR: --relay-desk -0.240,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.240,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.24,0.06,120.0,0,2,,"ERROR: --relay-desk -0.240,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.240,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.18,-0.24,0.0,0,5,,"relay: desk tray (-180, -240) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, -240) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-180 -240  111] mm"
+-0.18,-0.24,60.0,0,4,,"relay: desk tray (-180, -240) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, -240) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-180 -240  111] mm"
+-0.18,-0.24,120.0,0,4,,"relay: desk tray (-180, -240) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, -240) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [-180 -240  111] mm"
+-0.18,-0.18,0.0,1,8,5,
+-0.18,-0.18,60.0,1,9,5,
+-0.18,-0.18,120.0,1,18,5,
+-0.18,-0.12,0.0,1,8,5,
+-0.18,-0.12,60.0,1,19,5,
+-0.18,-0.12,120.0,1,19,5,
+-0.18,-0.06,0.0,0,4,,"relay: desk tray (-180, -60) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, -60) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-180  -60   50] mm [('base(base pad)', 'relay_tray')]"
+-0.18,-0.06,60.0,0,4,,"relay: desk tray (-180, -60) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, -60) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-180  -60   50] mm [('base(base pad)', 'relay_tray')]"
+-0.18,-0.06,120.0,1,22,5,
+-0.18,0.0,0.0,0,5,,"relay: desk tray (-180, 0) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, 0) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-180    0   50] mm [('base(base pad)', 'relay_tray')]"
+-0.18,0.0,60.0,0,6,,"relay: desk tray (-180, 0) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, 0) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-180    0   50] mm [('base(base pad)', 'relay_tray')]"
+-0.18,0.0,120.0,0,6,,"relay: desk tray (-180, 0) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-180, 0) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-180    0   50] mm [('base(base pad)', 'relay_tray')]"
+-0.18,0.06,0.0,0,3,,"ERROR: --relay-desk -0.180,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.180,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.18,0.06,60.0,0,2,,"ERROR: --relay-desk -0.180,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.180,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.18,0.06,120.0,0,2,,"ERROR: --relay-desk -0.180,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.180,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.12,-0.24,0.0,1,10,5,
+-0.12,-0.24,60.0,1,9,5,
+-0.12,-0.24,120.0,1,19,5,
+-0.12,-0.18,0.0,1,7,5,
+-0.12,-0.18,60.0,1,7,5,
+-0.12,-0.18,120.0,1,22,5,
+-0.12,-0.12,0.0,1,27,5,
+-0.12,-0.12,60.0,0,9,,"relay: desk tray (-120, -120) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-120, -120) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-120 -120   50] mm [('base(base pad)', 'relay_tray')]"
+-0.12,-0.12,120.0,0,4,,"relay: desk tray (-120, -120) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-120, -120) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-120 -120   50] mm [('base(base pad)', 'relay_tray')]"
+-0.12,-0.06,0.0,0,7,,"relay: desk tray (-120, -60) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-120, -60) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [-120  -60   50] mm [('base', 'relay_tray'), ('base(base pad)', 'relay_tray"
+-0.12,-0.06,60.0,0,11,,"relay: desk tray (-120, -60) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-120, -60) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: no normal grasp at the desk spot"
+-0.12,-0.06,120.0,0,5,,"ERROR: relay plan desk <-> TurtleBot failed, nothing moved:"
+-0.12,0.06,0.0,0,2,,"ERROR: --relay-desk -0.120,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.120,0.060,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.12,0.06,60.0,0,2,,"ERROR: --relay-desk -0.120,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.120,0.060,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.12,0.06,120.0,0,3,,"ERROR: --relay-desk -0.120,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk -0.120,0.060,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+-0.06,-0.3,0.0,0,6,,"relay: desk tray (-60, -300) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-60, -300) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [ -60 -300  101] mm"
+-0.06,-0.3,60.0,0,8,,"relay: desk tray (-60, -300) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-60, -300) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [ -60 -300  101] mm"
+-0.06,-0.3,120.0,0,6,,"relay: desk tray (-60, -300) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-60, -300) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: IK branch jump at [ -60 -300  101] mm"
+-0.06,-0.24,0.0,1,12,5,
+-0.06,-0.24,60.0,1,11,5,
+-0.06,-0.24,120.0,1,12,5,
+-0.06,-0.18,0.0,1,6,5,
+-0.06,-0.18,60.0,1,6,5,
+-0.06,-0.18,120.0,1,14,5,
+-0.06,-0.12,0.0,0,4,,"relay: desk tray (-60, -120) mm, L->R 0 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-60, -120) mm, L->R 0 deg: desk <-> TurtleBot: no way /     regrasp 180: lift: collision at [ -60 -120   50] mm [('base(base pad)', 'relay_tray')]"
+-0.06,-0.12,60.0,0,8,,"relay: desk tray (-60, -120) mm, L->R 60 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-60, -120) mm, L->R 60 deg: desk <-> TurtleBot: no way /     regrasp 180: no normal grasp at the desk spot"
+-0.06,-0.12,120.0,0,9,,"relay: desk tray (-60, -120) mm, L->R 120 deg: no way, next | ERROR: relay plan desk <-> TurtleBot failed, nothing moved: | desk tray (-60, -120) mm, L->R 120 deg: desk <-> TurtleBot: no way /     regrasp 180: no normal grasp at the desk spot"
+0.0,-0.3,0.0,0,1,,"ERROR: --relay-desk 0.000,-0.300,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.300,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.3,60.0,0,1,,"ERROR: --relay-desk 0.000,-0.300,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.300,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.3,120.0,0,1,,"ERROR: --relay-desk 0.000,-0.300,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.300,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.24,0.0,0,6,,"ERROR: --relay-desk 0.000,-0.240,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.240,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.24,60.0,0,1,,"ERROR: --relay-desk 0.000,-0.240,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.240,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.24,120.0,0,1,,"ERROR: --relay-desk 0.000,-0.240,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.240,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.18,0.0,0,1,,"ERROR: --relay-desk 0.000,-0.180,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.180,0: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.18,60.0,0,1,,"ERROR: --relay-desk 0.000,-0.180,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.180,60: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"
+0.0,-0.18,120.0,0,1,,"ERROR: --relay-desk 0.000,-0.180,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges) | desk -> TurtleBot: --relay-desk 0.000,-0.180,120: the tray (10 x 16 cm) is not on the desk there (1 cm in from its edges)"

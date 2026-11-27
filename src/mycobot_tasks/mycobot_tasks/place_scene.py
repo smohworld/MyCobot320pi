@@ -96,7 +96,7 @@ FORK_OVER_CARRIAGE = 79.0                       # D11 top - D07 bottom (guide 3D
 FORK_TOP = tuple(66.0 + c + FORK_OVER_CARRIAGE for c in CARRIAGE)   # 263..616 over the floor
 # shelf tray (guide part E): D13 frame 150 x 100 x 6, PP body 50, D31 handle arch in the
 # middle (30 along X, 91 along Y) up to 76 over the tray bottom
-TRAY = dict(len=150.0, wid=100.0, h=56.0, handle_x=30.0, handle_y=91.0, handle_z=(10.0, 76.0))
+TRAY = dict(len=150.0, wid=100.0, h=56.0, handle_x=30.0, handle_y=91.0, handle_z=(10.0, 78.0))  # top 78 mm (real, 11-27)
 
 
 
@@ -239,6 +239,11 @@ def shelf_boxes(a):
                             sy + T['wid'] / 2, lv, lv + T['h']),
                            (sx - hx, sx + hx, sy - hy, sy + hy, lv + hz[0], lv + hz[1])]
         b['shelf_stored'] = stored
+    dy = getattr(a, 'rack_dy', 0.0) * 1000
+    if dy:            # the rack (+ its stored trays) moved back from the mast (user 11-27: real)
+        for k in ('shelf_rack', 'shelf_stored'):
+            if k in b:
+                b[k] = [(x0, x1, y0 + dy, y1 + dy, z0, z1) for x0, x1, y0, y1, z0, z1 in b[k]]
     info = dict(F=F, tray=(tx, ty), handle_top=F + hz[1], cx=cx)
     return b, info
 
@@ -734,6 +739,9 @@ def make_parser():
                    help='tray centre - mast centre along the shelf X [m] (measure it)')
     s.add_argument('--with-tray', action='store_true',
                    help='also add the tray on the fork as a collision object (not for picking)')
+    s.add_argument('--rack-dy', type=float, default=0.0,
+                   help='rack (shelf_rack + stored trays) moved this far back from the mast '
+                        '(shelf +Y) [m]; the guide model = 0 (mast end -> rack front 198 mm)')
     s.add_argument('--rack-trays', action='store_true',
                    help='a tray in every storage cell of the rack (all but the L1 left hand-over '
                         'cell) as collision objects: the shelf full')
